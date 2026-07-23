@@ -289,9 +289,11 @@ export default function DashboardPage() {
                           className={`px-2 py-1 rounded-full text-xs ${
                             order.status === "concluído"
                               ? "bg-green-100 text-green-800"
-                              : order.status === "pendente"
-                                ? "bg-amber-100 text-amber-800"
-                                : "bg-blue-100 text-blue-800"
+                              : order.status === "rascunho"
+                                ? "bg-gray-100 text-gray-800 border border-gray-200"
+                                : order.status === "pendente"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-blue-100 text-blue-800"
                           }`}
                         >
                           {order.status.charAt(0).toUpperCase() + order.status.slice(1)}

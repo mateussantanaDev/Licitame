@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useContracts, type Contract, type ContractAddendum } from "@/lib/contracts-provider"
 import { useOrders } from "@/lib/orders-provider"
+import { useReports } from "@/lib/reports-provider"
 import { useAuth } from "@/lib/auth-provider"
 import { formatCurrency, calculateDaysRemaining, calculateDaysExpired } from "@/lib/utils"
 import { ArrowLeft, FileText, ShoppingCart, AlertTriangle, Clock, Edit, Trash2, ExternalLink, Plus } from "lucide-react"
@@ -38,6 +39,7 @@ import { useToast } from "@/hooks/use-toast"
 export default function ContratoDetalhesPage({ params }: { params: { id: string } }) {
   const { getContractById, deleteContract, addBalanceAdjustment, addAddendum } = useContracts()
   const { orders } = useOrders()
+  const { generateContractExtrapolationReport } = useReports()
   const { user } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
@@ -348,12 +350,30 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   {formatCurrency(contract.usedValue)} de {formatCurrency(contract.value)}
                 </p>
               </div>
-              <Progress value={contract.usedPercentage} className="h-2" />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{contract.usedPercentage}% utilizado</span>
-                <span>{100 - contract.usedPercentage}% disponível</span>
+              <Progress value={Math.min(100, contract.usedPercentage)} className={`h-2 ${contract.usedValue > contract.value ? "[&>div]:bg-red-600" : ""}`} />
+              <div className="flex justify-between text-xs font-semibold">
+                <span className={contract.usedPercentage > 100 ? "text-red-600 font-bold" : "text-muted-foreground"}>
+                  {contract.usedPercentage}% utilizado {contract.usedPercentage > 100 ? "(EXTRAPOLADO)" : ""}
+                </span>
+                <span className={contract.value - contract.usedValue < 0 ? "text-red-600 font-bold" : "text-muted-foreground"}>
+                  {contract.value - contract.usedValue < 0 
+                    ? `Saldo Negativo: ${formatCurrency(contract.value - contract.usedValue)}`
+                    : `${formatCurrency(contract.value - contract.usedValue)} disponível`}
+                </span>
               </div>
             </div>
+
+            {(contract.usedValue > contract.value || contract.items?.some(i => i.usedQuantity > i.quantity)) && (
+              <div className="flex items-center gap-2 p-3 bg-red-100 border border-red-300 text-red-900 rounded-md">
+                <AlertTriangle className="h-5 w-5 flex-shrink-0 text-red-600 animate-pulse" />
+                <div className="text-xs">
+                  <p className="font-bold text-red-900">Extrapolação de Limites Detectada</p>
+                  <p className="text-red-800">
+                    O consumo deste contrato ultrapassou o teto ou a quantidade permitida por item. Baixe o relatório no botão acima para prestação de contas.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {isExpiringSoon && !isExpired && (
               <div className="flex items-center gap-2 p-3 bg-amber-50 text-amber-800 rounded-md">
@@ -483,17 +503,36 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                     </TableCell>
                   </TableRow>
                 ) : (
-                  contract.items.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.description}</TableCell>
-                      <TableCell className="text-right">{item.quantity}</TableCell>
-                      <TableCell className="text-right">{item.usedQuantity}</TableCell>
-                      <TableCell className="text-right">{item.quantity - item.usedQuantity}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(item.totalPrice)}</TableCell>
-                    </TableRow>
-                  ))
+                  contract.items.map((item) => {
+                    const isItemExceeded = item.usedQuantity > item.quantity
+                    const excessQty = item.usedQuantity - item.quantity
+                    const availableQty = item.quantity - item.usedQuantity
+
+                    return (
+                      <TableRow key={item.id} className={isItemExceeded ? "bg-red-50/60 hover:bg-red-50/80" : ""}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <span>{item.name}</span>
+                            {isItemExceeded && (
+                              <Badge variant="destructive" className="bg-red-600 text-[10px] h-4 py-0 px-1 font-semibold">
+                                Extrapolado (+{excessQty})
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{item.description}</TableCell>
+                        <TableCell className="text-right">{item.quantity}</TableCell>
+                        <TableCell className={`text-right font-medium ${isItemExceeded ? "text-red-600 font-bold" : ""}`}>
+                          {item.usedQuantity}
+                        </TableCell>
+                        <TableCell className={`text-right font-medium ${availableQty < 0 ? "text-red-600 font-bold" : ""}`}>
+                          {availableQty < 0 ? `${availableQty} (Excesso: +${excessQty})` : availableQty}
+                        </TableCell>
+                        <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(item.totalPrice)}</TableCell>
+                      </TableRow>
+                    )
+                  })
                 )}
               </TableBody>
             </Table>

@@ -17,7 +17,7 @@ import { Eye, FileText, Filter, Plus, Search, SlidersHorizontal, Printer } from 
 import { formatCurrency } from "@/lib/utils"
 
 // Tipos bem definidos
-type OrderStatus = "pendente" | "aprovado" | "rejeitado" | "entregue"
+type OrderStatus = "rascunho" | "pendente" | "aprovado" | "rejeitado" | "entregue"
 
 interface EnrichedOrder {
   id: string
@@ -125,6 +125,7 @@ const formatDate = (dateString: string | number | Date): string => {
 
 const getStatusBadgeVariant = (status: OrderStatus): "default" | "secondary" | "destructive" | "outline" => {
   const variants: Record<OrderStatus, "default" | "secondary" | "destructive" | "outline"> = {
+    rascunho: "outline",
     aprovado: "default",
     pendente: "secondary",
     rejeitado: "destructive",
@@ -211,6 +212,7 @@ export default function PedidosPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos os status</SelectItem>
+                  <SelectItem value="rascunho">Rascunho</SelectItem>
                   <SelectItem value="pendente">Pendente</SelectItem>
                   <SelectItem value="aprovado">Aprovado</SelectItem>
                   <SelectItem value="rejeitado">Rejeitado</SelectItem>

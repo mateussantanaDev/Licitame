@@ -8,6 +8,7 @@ import { useSuppliers } from "@/lib/suppliers-provider"
 import { useContracts } from "@/lib/contracts-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useOrders } from "@/lib/orders-provider"
+import { useReports } from "@/lib/reports-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -34,12 +35,13 @@ import {
   ShoppingCart,
   Truck,
   AlertCircle,
+  Search,
 } from "lucide-react"
 import { formatCurrency } from "@/lib/utils"
 
 // Tipos
 type Step = "contract" | "supplier" | "products" | "review"
-type OrderStatus = "pendente" | "em separação" | "realizado" | "entregue" | "concluído" | "cancelado"
+type OrderStatus = "rascunho" | "pendente" | "em separação" | "realizado" | "entregue" | "concluído" | "cancelado"
 
 interface OrderProduct {
   id: string
@@ -69,7 +71,8 @@ export default function NovoPedidoPage() {
   const { suppliers, isLoading: isSuppliersLoading } = useSuppliers()
   const { contracts, isLoading: isContractsLoading } = useContracts()
   const { products, isLoading: isProductsLoading } = useProducts()
-  const { addOrder, isLoading: isOrdersLoading } = useOrders()
+  const { addOrder, updateOrder, orders, isLoading: isOrdersLoading } = useOrders()
+  const { generateOrderExtrapolationReport } = useReports()
 
   // Estados
   const [currentStep, setCurrentStep] = useState<Step>("contract")
@@ -90,6 +93,10 @@ export default function NovoPedidoPage() {
   const [isNavigating, setIsNavigating] = useState(false)
   const [availableSuppliers, setAvailableSuppliers] = useState<SupplierMatch[]>([])
   const [contractHasSupplier, setContractHasSupplier] = useState(false)
+  
+  // Estados para edição e pesquisa de produtos
+  const [editOrderId, setEditOrderId] = useState<string | null>(null)
+  const [productSearchQuery, setProductSearchQuery] = useState("")
 
   // Dados derivados
   const selectedContract = contracts.find((c) => c.id === selectedContractId)
@@ -128,26 +135,86 @@ export default function NovoPedidoPage() {
     })
   }, [contracts, availableContracts, isContractsLoading])
 
+  // Carregar dados para edição de pedido se editOrderId estiver presente na URL
+  useEffect(() => {
+    const editId = searchParams.get("edit")
+    if (editId && orders.length > 0 && contracts.length > 0) {
+      setEditOrderId(editId)
+      const orderToEdit = orders.find((o) => o.id === editId)
+      if (orderToEdit) {
+        setSelectedContractId(orderToEdit.contractId)
+        
+        // Buscar fornecedor a partir do contrato
+        const contract = contracts.find((c) => c.id === orderToEdit.contractId)
+        if (contract && contract.supplierId) {
+          setSelectedSupplierId(contract.supplierId)
+        }
+        
+        setSelectedProducts(
+          orderToEdit.items.map((item) => ({
+            id: item.contractItemId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice,
+          }))
+        )
+        
+        setFormData({
+          requestedBy: orderToEdit.requestedBy || "",
+          department: orderToEdit.requestedByDepartment || "",
+          deliveryDate: orderToEdit.deliveryDate
+            ? new Date(orderToEdit.deliveryDate)
+            : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          priority: orderToEdit.priority || "medium",
+          deliveryAddress: orderToEdit.requestedFor || "",
+          notes: orderToEdit.notes || "",
+        })
+        
+        setOrderNumber(orderToEdit.number)
+        setCurrentStep("products")
+      }
+    }
+  }, [searchParams, orders, contracts])
+
+  const orderToEdit = editOrderId ? orders.find((o) => o.id === editOrderId) : null
+
   const availableProducts = selectedContract
     ? products.filter((product) => selectedContract.productIds?.includes(product.id))
     : []
 
+  const filteredContractItems = selectedContract?.items
+    .filter((item) => 
+      item.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+      item.description.toLowerCase().includes(productSearchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      const aQty = selectedProducts.find((p) => p.id === a.id)?.quantity || 0
+      const bQty = selectedProducts.find((p) => p.id === b.id)?.quantity || 0
+      if (aQty > 0 && bQty === 0) return -1
+      if (aQty === 0 && bQty > 0) return 1
+      return 0
+    }) || []
+
   const selectedProductsWithDetails = selectedProducts.map((sp) => {
     const productDetails = products.find((p) => p.id === sp.id)
     const contractItem = selectedContract?.items.find((item) => item.id === sp.id)
+    const originalQty = orderToEdit?.items.find((item) => item.contractItemId === sp.id)?.quantity || 0
     return {
       ...sp,
       name: productDetails?.name || contractItem?.name || "",
       description: productDetails?.description || contractItem?.description || "",
       code: productDetails?.sku || "",
       unit: productDetails?.unit || "",
-      availableQuantity: contractItem ? contractItem.quantity - contractItem.usedQuantity : 0,
+      availableQuantity: contractItem ? contractItem.quantity - contractItem.usedQuantity + originalQty : 0,
     }
   })
 
   const totalOrderValue = selectedProducts.reduce((sum, product) => sum + product.totalPrice, 0)
 
-  const contractAvailableLimit = selectedContract ? selectedContract.value - selectedContract.usedValue : 0
+  const originalOrderValue = orderToEdit ? orderToEdit.totalValue : 0
+  const contractAvailableLimit = selectedContract
+    ? selectedContract.value - selectedContract.usedValue + originalOrderValue
+    : 0
 
   const remainingAfterOrder = contractAvailableLimit - totalOrderValue
   const isOverLimit = remainingAfterOrder < 0
@@ -295,14 +362,16 @@ export default function NovoPedidoPage() {
     try {
       setIsSubmitting(true)
 
-      const newOrderNumber = `PED-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, "0")}`
-      setOrderNumber(newOrderNumber)
+      const finalOrderNumber = editOrderId ? orderNumber : `PED-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, "0")}`
+      if (!editOrderId) {
+        setOrderNumber(finalOrderNumber)
+      }
 
-      const newOrder = {
-        number: newOrderNumber,
+      const orderData = {
+        number: finalOrderNumber,
         contractId: selectedContractId,
         contractNumber: selectedContract?.number || "",
-        date: new Date().toISOString(),
+        date: editOrderId ? (orders.find(o => o.id === editOrderId)?.date || new Date().toISOString()) : new Date().toISOString(),
         requestedBy: formData.requestedBy,
         requestedByDepartment: formData.department,
         requestedFor: formData.deliveryAddress,
@@ -321,18 +390,22 @@ export default function NovoPedidoPage() {
         notes: formData.notes,
       }
 
-      await addOrder(newOrder)
+      if (editOrderId) {
+        await updateOrder(editOrderId, orderData)
+      } else {
+        await addOrder(orderData)
+      }
       setShowOrderSummary(true)
     } catch (error) {
-      console.error("Erro ao criar pedido:", error)
-      alert("Ocorreu um erro ao criar o pedido. Por favor, tente novamente.")
+      console.error("Erro ao salvar pedido:", error)
+      alert("Ocorreu um erro ao salvar o pedido. Por favor, tente novamente.")
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const handleSaveAsDraft = () => {
-    handleSubmitOrder("pendente")
+    handleSubmitOrder("rascunho")
   }
 
   const handlePrintOrder = () => {
@@ -341,12 +414,20 @@ export default function NovoPedidoPage() {
 
   const handleReturnToOrders = () => {
     setIsNavigating(true)
-    router.push("/dashboard/pedidos")
+    if (editOrderId) {
+      router.push(`/dashboard/pedidos/${editOrderId}`)
+    } else {
+      router.push("/dashboard/pedidos")
+    }
   }
 
   const handleCancel = () => {
     setIsNavigating(true)
-    router.push("/dashboard/pedidos")
+    if (editOrderId) {
+      router.push(`/dashboard/pedidos/${editOrderId}`)
+    } else {
+      router.push("/dashboard/pedidos")
+    }
   }
 
   const isLoading = isSuppliersLoading || isContractsLoading || isProductsLoading || isOrdersLoading
@@ -361,6 +442,37 @@ export default function NovoPedidoPage() {
             Voltar
           </Button>
           <div className="flex gap-2">
+            {selectedContract && (
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const orderObj = orders.find((o) => o.number === orderNumber) || {
+                    id: "temp",
+                    number: orderNumber,
+                    contractId: selectedContract.id,
+                    contractNumber: selectedContract.number,
+                    date: new Date().toISOString(),
+                    requestedBy: formData.requestedBy,
+                    requestedByDepartment: formData.department,
+                    requestedFor: formData.deliveryAddress,
+                    items: selectedProductsWithDetails.map((p) => ({
+                      id: p.id,
+                      contractItemId: p.id,
+                      name: p.name,
+                      quantity: p.quantity,
+                      unitPrice: p.unitPrice,
+                      totalPrice: p.totalPrice,
+                    })),
+                    totalValue: totalOrderValue,
+                    status: "pendente" as const,
+                  }
+                  generateOrderExtrapolationReport(orderObj, selectedContract)
+                }}
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                Relatório de Extrapolação (PDF)
+              </Button>
+            )}
             <Button variant="outline" onClick={handlePrintOrder}>
               <Printer className="mr-2 h-4 w-4" />
               Imprimir
@@ -371,6 +483,20 @@ export default function NovoPedidoPage() {
             </Button>
           </div>
         </div>
+
+        {selectedProductsWithDetails.some((p) => {
+          const cItem = selectedContract?.items.find((ci) => ci.id === p.id)
+          const availableBefore = cItem ? cItem.quantity - (cItem.usedQuantity - p.quantity) : 0
+          return p.quantity > availableBefore
+        }) && (
+          <Alert variant="destructive" className="bg-red-50 border-red-200 text-red-900">
+            <AlertTriangle className="h-5 w-5 text-red-600" />
+            <AlertTitle className="font-bold text-red-900">Extrapolação de Limite Contratual Detectada</AlertTitle>
+            <AlertDescription className="text-sm text-red-800">
+              Este pedido ultrapassou a quantidade/saldo originalmente prevista no contrato. Conforme diretrizes, você pode emitir o relatório de extrapolação acima para instrução do processo contratual.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card className="print:border-none print:shadow-none">
           <CardContent className="p-6">
@@ -530,8 +656,12 @@ export default function NovoPedidoPage() {
     <div className="container mx-auto py-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Novo Pedido</h1>
-          <p className="text-gray-500">Preencha as informações para criar um novo pedido</p>
+          <h1 className="text-2xl font-bold">
+            {editOrderId ? `Editar Pedido #${orderNumber}` : "Novo Pedido"}
+          </h1>
+          <p className="text-gray-500">
+            {editOrderId ? "Atualize as informações do pedido selecionado" : "Preencha as informações para criar um novo pedido"}
+          </p>
         </div>
         <Button variant="outline" onClick={handleCancel} disabled={isNavigating}>
           {isNavigating ? <LoadingSpinner className="h-4 w-4 mr-2" /> : null}
@@ -1030,114 +1160,158 @@ export default function NovoPedidoPage() {
                     <p className="text-sm text-gray-500">Este contrato não possui itens cadastrados.</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Produto</TableHead>
-                          <TableHead>Qtd. Disponível</TableHead>
-                          <TableHead>Valor Unitário</TableHead>
-                          <TableHead>Quantidade</TableHead>
-                          <TableHead>Valor Total</TableHead>
-                          <TableHead></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedContract?.items.map((item) => {
-                          const selectedProduct = selectedProducts.find((p) => p.id === item.id)
-                          const quantity = selectedProduct?.quantity || 0
-                          const totalPrice = item.unitPrice * quantity
-                          const availableQuantity = item.quantity - item.usedQuantity
-
-                          return (
-                            <TableRow key={item.id}>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium">{item.name}</p>
-                                  <p className="text-xs text-gray-500">{item.description}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant={
-                                    availableQuantity > item.quantity * 0.5
-                                      ? "default"
-                                      : availableQuantity > 0
-                                        ? "secondary"
-                                        : "destructive"
-                                  }
-                                >
-                                  {availableQuantity} de {item.quantity}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>{formatCurrency(item.unitPrice)}</TableCell>
-                              <TableCell>
-                                <div className="flex w-32 items-center">
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 rounded-r-none bg-transparent"
-                                    onClick={() => handleProductSelection(item.id, Math.max(0, quantity - 1))}
-                                    disabled={quantity === 0}
-                                  >
-                                    <Minus className="h-4 w-4" />
-                                  </Button>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    max={availableQuantity}
-                                    value={quantity}
-                                    onChange={(e) => {
-                                      const value = Number.parseInt(e.target.value) || 0
-                                      handleProductSelection(item.id, Math.min(value, availableQuantity))
-                                    }}
-                                    className="h-8 rounded-none border-x-0 text-center"
-                                  />
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 rounded-l-none bg-transparent"
-                                    onClick={() =>
-                                      handleProductSelection(item.id, Math.min(quantity + 1, availableQuantity))
-                                    }
-                                    disabled={quantity >= availableQuantity}
-                                  >
-                                    <Plus className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              </TableCell>
-                              <TableCell className={quantity > 0 ? "font-medium" : ""}>
-                                {formatCurrency(totalPrice)}
-                              </TableCell>
-                              <TableCell>
-                                {quantity > 0 && (
-                                  <Button variant="ghost" size="sm" onClick={() => handleProductSelection(item.id, 0)}>
-                                    Remover
-                                  </Button>
-                                )}
-                              </TableCell>
+                  <div className="space-y-4">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                      <Input
+                        placeholder="Buscar produto pelo nome ou descrição..."
+                        className="pl-8"
+                        value={productSearchQuery}
+                        onChange={(e) => setProductSearchQuery(e.target.value)}
+                      />
+                    </div>
+                    {filteredContractItems.length === 0 ? (
+                      <div className="flex h-32 flex-col items-center justify-center text-center border rounded-md">
+                        <p className="text-sm text-gray-500">Nenhum produto correspondente encontrado.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Produto</TableHead>
+                              <TableHead>Qtd. Disponível</TableHead>
+                              <TableHead>Valor Unitário</TableHead>
+                              <TableHead>Quantidade</TableHead>
+                              <TableHead>Valor Total</TableHead>
+                              <TableHead></TableHead>
                             </TableRow>
-                          )
-                        })}
-                        {selectedProducts.length > 0 && (
-                          <TableRow>
-                            <TableCell colSpan={4} className="text-right font-bold">
-                              Valor Total do Pedido:
-                            </TableCell>
-                            <TableCell className="font-bold">{formatCurrency(totalOrderValue)}</TableCell>
-                            <TableCell></TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {filteredContractItems.map((item) => {
+                              const selectedProduct = selectedProducts.find((p) => p.id === item.id)
+                              const quantity = selectedProduct?.quantity || 0
+                              const totalPrice = item.unitPrice * quantity
+                              const originalQty = orderToEdit?.items.find((oItem) => oItem.contractItemId === item.id)?.quantity || 0
+                              const availableQuantity = item.quantity - item.usedQuantity + originalQty
+
+                              const isExceeded = quantity > availableQuantity && availableQuantity >= 0
+                              const exceededQty = isExceeded ? quantity - availableQuantity : (availableQuantity < 0 ? quantity : 0)
+
+                              return (
+                                <TableRow key={item.id} className={quantity > 0 ? (isExceeded ? "bg-red-50/50 hover:bg-red-50/70" : "bg-blue-50/40 hover:bg-blue-50/60") : ""}>
+                                  <TableCell>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <p className="font-medium">{item.name}</p>
+                                        {quantity > 0 && !isExceeded && (
+                                          <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-[10px] py-0 px-1.5 h-4 font-normal">
+                                            No Pedido
+                                          </Badge>
+                                        )}
+                                        {exceededQty > 0 && (
+                                          <Badge variant="destructive" className="bg-red-600 text-white text-[10px] py-0 px-1.5 h-4 font-semibold animate-pulse">
+                                            Extrapolado (+{exceededQty})
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-gray-500">{item.description}</p>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="flex flex-col gap-1">
+                                      <Badge
+                                        variant={
+                                          availableQuantity > item.quantity * 0.5
+                                            ? "default"
+                                            : availableQuantity > 0
+                                              ? "secondary"
+                                              : "destructive"
+                                        }
+                                      >
+                                        {availableQuantity} de {item.quantity}
+                                      </Badge>
+                                      {exceededQty > 0 && (
+                                        <span className="text-[11px] font-bold text-red-600">
+                                          Excesso: +{exceededQty} un ({formatCurrency(exceededQty * item.unitPrice)})
+                                        </span>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>{formatCurrency(item.unitPrice)}</TableCell>
+                                  <TableCell>
+                                    <div className="flex w-32 items-center">
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8 rounded-r-none bg-transparent"
+                                        onClick={() => handleProductSelection(item.id, Math.max(0, quantity - 1))}
+                                        disabled={quantity === 0}
+                                      >
+                                        <Minus className="h-4 w-4" />
+                                      </Button>
+                                      <Input
+                                        type="number"
+                                        min="0"
+                                        value={quantity}
+                                        onChange={(e) => {
+                                          const value = Number.parseInt(e.target.value) || 0
+                                          handleProductSelection(item.id, Math.max(0, value))
+                                        }}
+                                        className={`h-8 rounded-none border-x-0 text-center ${exceededQty > 0 ? "border-red-500 font-bold text-red-600 bg-red-50" : ""}`}
+                                      />
+                                      <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8 rounded-l-none bg-transparent"
+                                        onClick={() =>
+                                          handleProductSelection(item.id, quantity + 1)
+                                        }
+                                      >
+                                        <Plus className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className={quantity > 0 ? "font-medium" : ""}>
+                                    {formatCurrency(totalPrice)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {quantity > 0 && (
+                                      <Button variant="ghost" size="sm" onClick={() => handleProductSelection(item.id, 0)}>
+                                        Remover
+                                      </Button>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })}
+                            {selectedProducts.length > 0 && (
+                              <TableRow>
+                                <TableCell colSpan={4} className="text-right font-bold">
+                                  Valor Total do Pedido:
+                                </TableCell>
+                                <TableCell className="font-bold">{formatCurrency(totalOrderValue)}</TableCell>
+                                <TableCell></TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
               <CardFooter className="flex justify-between">
-                <Button variant="outline" onClick={handleBack}>
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Voltar
-                </Button>
+                {editOrderId ? (
+                  <Button variant="outline" onClick={() => router.push(`/dashboard/pedidos/${editOrderId}`)}>
+                    Cancelar Edição
+                  </Button>
+                ) : (
+                  <Button variant="outline" onClick={handleBack}>
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Voltar
+                  </Button>
+                )}
                 <Button
                   onClick={handleNext}
                   disabled={selectedProducts.length === 0 || isOverLimit || !selectedContract?.items.length}
@@ -1322,7 +1496,7 @@ export default function NovoPedidoPage() {
                   </Button>
                   <Button onClick={() => handleSubmitOrder()} disabled={isSubmitting || !validateDetailsForm()}>
                     {isSubmitting ? <LoadingSpinner className="h-4 w-4 mr-2" /> : <Truck className="mr-2 h-4 w-4" />}
-                    Finalizar Pedido
+                    {editOrderId && orders.find((o) => o.id === editOrderId)?.status === "pendente" ? "Salvar Alterações" : "Finalizar Pedido"}
                   </Button>
                 </div>
               </CardFooter>

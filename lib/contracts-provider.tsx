@@ -81,6 +81,7 @@ type ContractsContextType = {
   getContractById: (id: string) => Contract | undefined
   updateContractUsage: (id: string, value: number) => void
   updateContractItemUsage: (contractId: string, itemId: string, quantity: number) => void
+  recalculateContractBalances: (ordersList: any[]) => void
   addBalanceAdjustment: (contractId: string, adjustment: Omit<BalanceAdjustment, "id" | "createdAt">) => Promise<boolean>
   addAddendum: (contractId: string, addendum: Omit<ContractAddendum, "id" | "createdAt">) => Promise<boolean>
   exportData: () => void
@@ -91,8 +92,10 @@ const ContractsContext = createContext<ContractsContextType | undefined>(undefin
 
 // Função para transformar dados do Firebase para a estrutura esperada
 const transformFirebaseContract = (data: any): Contract => {
-  const totalValue = data.valor_total_contrato || data.value || 0
-  const usedValue = data.valor_utilizado || data.usedValue || 0
+  const totalValue = Number(data.valor_total_contrato || data.value || 0)
+  const rawUsedValue = Number(data.valor_utilizado || data.usedValue || 0)
+  // Garantir que valor utilizado legado do banco não venha negativo por erro de sinal
+  const usedValue = rawUsedValue < 0 ? Math.abs(rawUsedValue) : rawUsedValue
   const usedPercentage = totalValue > 0 ? Math.round((usedValue / totalValue) * 100) : 0
 
   // Função auxiliar para converter strings de data para ISO string válido
@@ -510,7 +513,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       prev.map((contract) => {
         if (contract.id === id) {
           const newUsedValue = contract.usedValue + value
-          const newUsedPercentage = Math.round((newUsedValue / contract.value) * 100)
+          const newUsedPercentage = contract.value > 0 ? Math.round((newUsedValue / contract.value) * 100) : 0
 
           // Salvar no Firebase
           if (isFirebaseConfigured()) {
@@ -561,6 +564,64 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         return contract
       }),
     )
+  }
+
+  const recalculateContractBalances = (ordersList: any[]) => {
+    if (!ordersList || !Array.isArray(ordersList)) return
+
+    setContracts((prevContracts) => {
+      let changed = false
+      const updated = prevContracts.map((contract) => {
+        const activeOrders = ordersList.filter(
+          (o) => o.contractId === contract.id && o.status !== "cancelado"
+        )
+
+        const ordersTotal = activeOrders.reduce((sum, o) => sum + Number(o.totalValue || 0), 0)
+        const adjustmentsTotal = (contract.balanceAdjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0)
+        const realUsedValue = Math.max(0, ordersTotal + adjustmentsTotal)
+        const newUsedPercentage = contract.value > 0 ? Math.round((realUsedValue / contract.value) * 100) : 0
+
+        const updatedItems = contract.items.map((item) => {
+          const itemUsedQty = activeOrders.reduce((sum, o) => {
+            const orderItem = (o.items || []).find((i: any) => i.contractItemId === item.id || i.id === item.id)
+            return sum + (orderItem ? Number(orderItem.quantity) || 0 : 0)
+          }, 0)
+
+          return {
+            ...item,
+            usedQuantity: itemUsedQty,
+          }
+        })
+
+        const hasValueChanged = contract.usedValue !== realUsedValue || contract.usedPercentage !== newUsedPercentage
+        const hasItemsChanged = contract.items.some((item, idx) => item.usedQuantity !== updatedItems[idx]?.usedQuantity)
+
+        if (!hasValueChanged && !hasItemsChanged) {
+          return contract
+        }
+
+        changed = true
+        const updatedContract = {
+          ...contract,
+          usedValue: realUsedValue,
+          usedPercentage: newUsedPercentage,
+          items: updatedItems,
+        }
+
+        if (isFirebaseConfigured()) {
+          updateDocument(COLLECTIONS.CONTRACTS, contract.id, {
+            valor_utilizado: realUsedValue,
+            usedValue: realUsedValue,
+            itens: updatedItems,
+            items: updatedItems,
+          })
+        }
+
+        return updatedContract
+      })
+
+      return changed ? updated : prevContracts
+    })
   }
 
   const addBalanceAdjustment = async (
@@ -800,6 +861,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         getContractById,
         updateContractUsage,
         updateContractItemUsage,
+        recalculateContractBalances,
         addBalanceAdjustment,
         addAddendum,
         exportData,

@@ -8,6 +8,7 @@ import {
   getDocs,
   getDoc,
   addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
@@ -169,6 +170,27 @@ export async function addDocument<T extends object>(collectionName: string, data
   }
 }
 
+export async function setDocument<T extends object>(
+  collectionName: string,
+  id: string,
+  data: T
+): Promise<boolean> {
+  if (!isFirebaseConfigured()) return false
+  
+  try {
+    const db = getFirestoreDb()
+    const docRef = doc(db, collectionName, id)
+    await setDoc(docRef, {
+      ...data,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true })
+    return true
+  } catch (error) {
+    console.error(`Error setting document ${id} in ${collectionName}:`, error)
+    return false
+  }
+}
+
 export async function updateDocument<T extends object>(
   collectionName: string,
   id: string,
@@ -179,10 +201,10 @@ export async function updateDocument<T extends object>(
   try {
     const db = getFirestoreDb()
     const docRef = doc(db, collectionName, id)
-    await updateDoc(docRef, {
+    await setDoc(docRef, {
       ...data,
       updatedAt: new Date().toISOString(),
-    })
+    }, { merge: true })
     return true
   } catch (error) {
     console.error(`Error updating document ${id} in ${collectionName}:`, error)

@@ -8,6 +8,7 @@ import {
   isFirebaseConfigured,
   getAllDocuments,
   addDocument,
+  setDocument,
   updateDocument,
   deleteDocument,
   COLLECTIONS,
@@ -23,34 +24,32 @@ export type NotificationType =
   | "success"
   | "stock"
 
+export type NotificationPriority = "low" | "medium" | "high"
+
 export type Notification = {
   id: string
   title: string
   message: string
   type: NotificationType
+  priority?: NotificationPriority
   read: boolean
-  date?: string
+  date: string
   link?: string
   entityId?: string
-  priority?: "low" | "medium" | "high"
 }
 
 type NotificationsContextType = {
   notifications: Notification[]
+  unreadCount: number
   pendingNotifications: Notification[]
-  addNotification: (notification: Omit<Notification, "id" | "read" | "date"> & { id?: string }) => void
+  isPanelOpen: boolean
+  setIsPanelOpen: (open: boolean) => void
+  addNotification: (notification: Omit<Notification, "read" | "date"> & { id?: string }) => void
   markAsRead: (id: string) => void
   markAllAsRead: () => void
   deleteNotification: (id: string) => void
   clearAllNotifications: () => void
-  toggleNotificationsPanel: () => void
-  isPanelOpen: boolean
-  checkContractsStatus: () => void
-  checkOrdersStatus: (orders: any[]) => void
-  checkProductsStock: () => void
-  generateNotifications: () => void
   getNotificationsByType: (type: NotificationType) => Notification[]
-  getUnreadCount: () => number
   getUnreadCountByType: (type: NotificationType) => number
 }
 
@@ -146,6 +145,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
 
   const checkContractsStatus = () => {
+    if (!contracts || contracts.length === 0) return
+
     const now = new Date()
     const in30Days = new Date()
     in30Days.setDate(now.getDate() + 30)
@@ -226,7 +227,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         // Remover notificação se o pedido NÃO está mais pendente
         if (notifications.some((n) => n.id === approvalNotificationId)) {
           if (isFirebaseConfigured()) {
-            deleteDocument(COLLECTIONS.NOTIFICATIONS, approvalNotificationId)
+            try {
+              deleteDocument(COLLECTIONS.NOTIFICATIONS, approvalNotificationId)
+            } catch (err) {
+              console.error("Erro ao deletar notificação:", err)
+            }
           }
           setNotifications((prev) => prev.filter((n) => n.id !== approvalNotificationId))
         }
@@ -258,19 +263,20 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
 
   const checkProductsStock = () => {
-    products.forEach((product) => {
-      const stockNotificationId = `product-stock-${product.id}`
+    if (!products || products.length === 0) return
 
-      if (product.currentStock <= product.minStock && product.active) {
+    products.forEach((product) => {
+      if (product.currentStock <= product.minStock) {
+        const stockNotificationId = `product-stock-${product.id}`
         if (!notifications.some((n) => n.id === stockNotificationId)) {
           addNotification({
             id: stockNotificationId,
             title: "Estoque baixo",
-            message: `O produto "${product.name}" esta com estoque baixo (${product.currentStock} ${product.unit}).`,
+            message: `O produto ${product.name} esta com estoque baixo (${product.currentStock} ${product.unit}).`,
             type: "stock",
-            priority: product.currentStock === 0 ? "high" : "medium",
+            priority: "high",
             entityId: product.id,
-            link: `/dashboard/produtos/${product.id}`,
+            link: "/dashboard/produtos",
           })
         }
       }
@@ -291,8 +297,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
       // Save to Firestore
       if (isFirebaseConfigured()) {
-        const { id, ...data } = newNotification
-        addDocument(COLLECTIONS.NOTIFICATIONS, { ...data, notificationId: id })
+        try {
+          setDocument(COLLECTIONS.NOTIFICATIONS, newNotification.id, newNotification)
+        } catch (err) {
+          console.error("Erro ao salvar notificacao no Firebase:", err)
+        }
       }
 
       return [newNotification, ...prev]
@@ -301,7 +310,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const markAsRead = (id: string) => {
     if (isFirebaseConfigured()) {
-      updateDocument(COLLECTIONS.NOTIFICATIONS, id, { read: true })
+      try {
+        updateDocument(COLLECTIONS.NOTIFICATIONS, id, { read: true })
+      } catch (err) {
+        console.error("Erro ao marcar notificacao como lida:", err)
+      }
     }
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
@@ -312,7 +325,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     setNotifications((prev) => {
       prev.forEach((n) => {
         if (!n.read && isFirebaseConfigured()) {
-          updateDocument(COLLECTIONS.NOTIFICATIONS, n.id, { read: true })
+          try {
+            updateDocument(COLLECTIONS.NOTIFICATIONS, n.id, { read: true })
+          } catch (err) {
+            console.error("Erro ao marcar todas as notificacoes como lidas:", err)
+          }
         }
       })
       return prev.map((n) => ({ ...n, read: true }))

@@ -23,6 +23,8 @@ export type ReportFilter = {
 type ReportsContextType = {
   generateReport: (type: ReportType, format: ReportFormat, filters?: ReportFilter) => void
   generateBackup: () => void
+  generateOrderExtrapolationReport: (order: Order, contract: Contract, format?: ReportFormat) => void
+  generateContractExtrapolationReport: (contract: Contract, contractOrders: Order[], format?: ReportFormat) => void
 }
 
 const ReportsContext = createContext<ReportsContextType | undefined>(undefined)
@@ -85,7 +87,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         contract.company,
         new Date(contract.startDate).toLocaleDateString("pt-BR"),
         new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
-        `R$ ${contract.totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `R$ ${contract.totalValue ? contract.totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
         contract.status,
       ])
 
@@ -107,7 +109,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
             contract.company,
             new Date(contract.startDate).toLocaleDateString("pt-BR"),
             new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
-            contract.totalValue.toFixed(2),
+            contract.totalValue ? contract.totalValue.toFixed(2) : contract.value.toFixed(2),
             contract.usedValue.toFixed(2),
             contract.status,
           ].join(";"),
@@ -381,6 +383,243 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const generateOrderExtrapolationReport = (order: Order, contract: Contract, format: ReportFormat = "pdf") => {
+    if (format === "pdf") {
+      const doc = new jsPDF()
+
+      doc.setFontSize(16)
+      doc.setTextColor(180, 0, 0)
+      doc.text("RELATÓRIO DE EXTRAPOLAÇÃO DE LIMITES - PEDIDO", 14, 20)
+
+      doc.setFontSize(10)
+      doc.setTextColor(60, 60, 60)
+      doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
+      doc.text(`Pedido Nº: ${order.number} | Contrato Nº: ${contract.number}`, 14, 34)
+      doc.text(`Solicitante: ${order.requestedBy || "Não informado"} (${order.requestedByDepartment || "Geral"})`, 14, 40)
+      doc.text(`Empresa Contratada: ${contract.company}`, 14, 46)
+
+      const tableData: any[] = []
+      let totalExceededQty = 0
+      let totalExceededValue = 0
+
+      order.items.forEach((item) => {
+        const cItem = contract.items.find((ci) => ci.id === item.contractItemId)
+        const totalContractQty = cItem ? cItem.quantity : 0
+        const currentUsedQty = cItem ? cItem.usedQuantity : 0
+        const availableBefore = Math.max(0, totalContractQty - (currentUsedQty - item.quantity))
+        const exceededQty = Math.max(0, item.quantity - availableBefore)
+        const exceededVal = exceededQty * item.unitPrice
+
+        totalExceededQty += exceededQty
+        totalExceededValue += exceededVal
+
+        tableData.push([
+          item.name,
+          totalContractQty,
+          availableBefore,
+          item.quantity,
+          exceededQty > 0 ? `+${exceededQty}` : "0",
+          `R$ ${item.unitPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `R$ ${exceededVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+        ])
+      })
+
+      autoTable(doc, {
+        head: [["Item / Produto", "Qtd Contrato", "Qtd Disp. Antes", "Qtd Pedida", "Qtd Excedida", "Preço Unit.", "Valor Excedido"]],
+        body: tableData,
+        startY: 54,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [180, 0, 0] },
+        columnStyles: {
+          4: { fontStyle: "bold", textColor: [180, 0, 0] },
+          6: { fontStyle: "bold", textColor: [180, 0, 0] }
+        }
+      })
+
+      const finalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 120
+
+      doc.setFontSize(11)
+      doc.setTextColor(0, 0, 0)
+      doc.text("Resumo Financeiro da Extrapolação no Pedido:", 14, finalY)
+      doc.setFontSize(10)
+      doc.text(`- Total de Itens em Excesso: ${totalExceededQty} unidade(s)`, 14, finalY + 6)
+      doc.text(`- Valor Total Extrapolado neste Pedido: R$ ${totalExceededValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, finalY + 12)
+      doc.text(`- Valor Total do Pedido: R$ ${order.totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, finalY + 18)
+      
+      const currentContractBalance = contract.value - contract.usedValue
+      doc.text(`- Saldo Atual do Contrato pós-pedido: R$ ${currentContractBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} ${currentContractBalance < 0 ? "(SALDO NEGATIVO)" : ""}`, 14, finalY + 24)
+
+      doc.setFontSize(8)
+      doc.setTextColor(120, 120, 120)
+      doc.text("Documento oficial gerado para fins de fiscalização, auditoria e instrução contratual.", 14, finalY + 36)
+
+      doc.save(`relatorio-extrapolacao-pedido-${order.number}.pdf`)
+    } else {
+      const csvContent = [
+        ["Item / Produto", "Qtd Contrato", "Qtd Disp. Antes", "Qtd Pedida", "Qtd Excedida", "Preço Unitario", "Valor Excedido"].join(";"),
+        ...order.items.map((item) => {
+          const cItem = contract.items.find((ci) => ci.id === item.contractItemId)
+          const totalContractQty = cItem ? cItem.quantity : 0
+          const currentUsedQty = cItem ? cItem.usedQuantity : 0
+          const availableBefore = Math.max(0, totalContractQty - (currentUsedQty - item.quantity))
+          const exceededQty = Math.max(0, item.quantity - availableBefore)
+          const exceededVal = exceededQty * item.unitPrice
+          return [
+            item.name,
+            totalContractQty,
+            availableBefore,
+            item.quantity,
+            exceededQty,
+            item.unitPrice.toFixed(2),
+            exceededVal.toFixed(2)
+          ].join(";")
+        })
+      ].join("\n")
+
+      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `relatorio-extrapolacao-pedido-${order.number}.csv`
+      link.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const generateContractExtrapolationReport = (contract: Contract, contractOrders: Order[], format: ReportFormat = "pdf") => {
+    if (format === "pdf") {
+      const doc = new jsPDF()
+
+      doc.setFontSize(16)
+      doc.setTextColor(180, 0, 0)
+      doc.text("RELATÓRIO DE EXTRAPOLAÇÃO E EXCESSO CONTRATUAL", 14, 20)
+
+      doc.setFontSize(10)
+      doc.setTextColor(60, 60, 60)
+      doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
+      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${contract.company}`, 14, 34)
+      doc.text(`Valor Total Contratado: R$ ${contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, 40)
+      doc.text(`Valor Total Consumido: R$ ${contract.usedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${contract.usedPercentage}%)`, 14, 46)
+
+      const saldo = contract.value - contract.usedValue
+      if (saldo < 0) {
+        doc.setTextColor(180, 0, 0)
+        doc.text(`Saldo do Contrato: R$ ${saldo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (SALDO NEGATIVO / EXTRAPOLADO)`, 14, 52)
+      } else {
+        doc.setTextColor(0, 100, 0)
+        doc.text(`Saldo do Contrato: R$ ${saldo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (Dentro do Limite)`, 14, 52)
+      }
+
+      doc.setTextColor(0, 0, 0)
+      doc.setFontSize(11)
+      doc.text("1. Extrapolação por Item do Contrato", 14, 62)
+
+      const itemTableData: any[] = []
+      let globalExceededQty = 0
+      let globalExceededValue = 0
+
+      contract.items.forEach((item) => {
+        const exceededQty = Math.max(0, item.usedQuantity - item.quantity)
+        const exceededVal = exceededQty * item.unitPrice
+
+        globalExceededQty += exceededQty
+        globalExceededValue += exceededVal
+
+        itemTableData.push([
+          item.name,
+          item.quantity,
+          item.usedQuantity,
+          item.quantity - item.usedQuantity,
+          exceededQty > 0 ? `+${exceededQty}` : "0",
+          `R$ ${item.unitPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `R$ ${(item.quantity * item.unitPrice).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `R$ ${(item.usedQuantity * item.unitPrice).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `R$ ${exceededVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+        ])
+      })
+
+      autoTable(doc, {
+        head: [["Item", "Qtd Contrato", "Qtd Consumida", "Saldo Qtd", "Qtd Excedida", "Preço Unit.", "Valor Total", "Valor Consumido", "Valor Excedido"]],
+        body: itemTableData,
+        startY: 66,
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [180, 0, 0] },
+        columnStyles: {
+          4: { fontStyle: "bold", textColor: [180, 0, 0] },
+          8: { fontStyle: "bold", textColor: [180, 0, 0] }
+        }
+      })
+
+      let currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 130
+
+      doc.setFontSize(11)
+      doc.setTextColor(0, 0, 0)
+      doc.text("2. Histórico de Pedidos no Contrato", 14, currentY)
+
+      const orderTableData: any[] = []
+      contractOrders.forEach((o) => {
+        orderTableData.push([
+          o.number,
+          new Date(o.date).toLocaleDateString("pt-BR"),
+          o.requestedBy || "Não informado",
+          o.requestedByDepartment || "Geral",
+          `R$ ${o.totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          o.status
+        ])
+      })
+
+      autoTable(doc, {
+        head: [["Pedido Nº", "Data", "Solicitante", "Departamento", "Valor Total (R$)", "Status"]],
+        body: orderTableData,
+        startY: currentY + 4,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [70, 70, 70] },
+      })
+
+      currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : currentY + 40
+
+      doc.setFontSize(10)
+      doc.setTextColor(0, 0, 0)
+      doc.text("Síntese Geral da Extrapolação Contratual:", 14, currentY)
+      doc.text(`• Total de Unidades Extrapoladas: ${globalExceededQty} item(ns)`, 14, currentY + 6)
+      doc.text(`• Valor Financeiro Total Extrapolado nos Itens: R$ ${globalExceededValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, currentY + 12)
+      doc.text(`• Valor Excedido do Saldo Global do Contrato: R$ ${Math.max(0, contract.usedValue - contract.value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, currentY + 18)
+
+      doc.setFontSize(8)
+      doc.setTextColor(120, 120, 120)
+      doc.text("Relatório emitido para instrução de termo aditivo de reajuste ou controle financeiro do contrato.", 14, currentY + 30)
+
+      doc.save(`relatorio-extrapolacao-contrato-${contract.number}.pdf`)
+    } else {
+      const csvContent = [
+        ["Item", "Qtd Contrato", "Qtd Consumida", "Saldo Qtd", "Qtd Excedida", "Preço Unitario", "Valor Total Contrato", "Valor Total Consumido", "Valor Excedido"].join(";"),
+        ...contract.items.map((item) => {
+          const exceededQty = Math.max(0, item.usedQuantity - item.quantity)
+          const exceededVal = exceededQty * item.unitPrice
+          return [
+            item.name,
+            item.quantity,
+            item.usedQuantity,
+            item.quantity - item.usedQuantity,
+            exceededQty,
+            item.unitPrice.toFixed(2),
+            (item.quantity * item.unitPrice).toFixed(2),
+            (item.usedQuantity * item.unitPrice).toFixed(2),
+            exceededVal.toFixed(2)
+          ].join(";")
+        })
+      ].join("\n")
+
+      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `relatorio-extrapolacao-contrato-${contract.number}.csv`
+      link.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   const generateBackup = () => {
     const backupData = {
       version: "1.0.0",
@@ -409,6 +648,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       value={{
         generateReport,
         generateBackup,
+        generateOrderExtrapolationReport,
+        generateContractExtrapolationReport,
       }}
     >
       {children}
@@ -423,3 +664,4 @@ export function useReports() {
   }
   return context
 }
+

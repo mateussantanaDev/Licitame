@@ -32,7 +32,7 @@ export type Order = {
   requestedFor: string
   items: OrderItem[]
   totalValue: number
-  status: "pendente" | "em separação" | "realizado" | "entregue" | "concluído" | "cancelado"
+  status: "rascunho" | "pendente" | "em separação" | "realizado" | "entregue" | "concluído" | "cancelado"
   deliveryDate?: string
   priority?: "low" | "medium" | "high"
   notes?: string
@@ -74,11 +74,17 @@ const OrdersContext = createContext<OrdersContextType | undefined>(undefined)
 export function OrdersProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const { updateContractUsage, updateContractItemUsage } = useContracts()
+  const { updateContractUsage, updateContractItemUsage, recalculateContractBalances } = useContracts()
 
   useEffect(() => {
     loadFromFirestore()
   }, [])
+
+  useEffect(() => {
+    if (orders.length > 0 && recalculateContractBalances) {
+      recalculateContractBalances(orders)
+    }
+  }, [orders, recalculateContractBalances])
 
   const loadFromFirestore = async () => {
     try {
@@ -158,26 +164,35 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     
     if (!orderToUpdate) return
 
-    // Verificar mudanças de status que afetam o saldo do contrato
-    if (orderUpdate.status && orderToUpdate.status !== orderUpdate.status) {
-      const wasActive = orderToUpdate.status !== "cancelado"
-      const isNowActive = orderUpdate.status !== "cancelado"
+    // Verificar mudanças de status ou de itens que afetam o saldo do contrato
+    const wasActive = orderToUpdate.status !== "cancelado"
+    const isNowActive = (orderUpdate.status ?? orderToUpdate.status) !== "cancelado"
 
-      // Se o pedido estava ativo e agora está cancelado: reverter o valor
-      if (wasActive && !isNowActive) {
+    const itemsChanged = orderUpdate.items !== undefined
+    const totalValueChanged = orderUpdate.totalValue !== undefined
+    const statusChanged = orderUpdate.status !== undefined && orderToUpdate.status !== orderUpdate.status
+
+    if (statusChanged || itemsChanged || totalValueChanged) {
+      // 1. Reverter o saldo antigo se o pedido estava ativo
+      if (wasActive) {
         updateContractUsage(orderToUpdate.contractId, -orderToUpdate.totalValue)
         orderToUpdate.items.forEach((item) => {
-          updateContractItemUsage(orderToUpdate.contractId, item.contractItemId, -item.quantity ?? 0)
+          updateContractItemUsage(orderToUpdate.contractId, item.contractItemId, -(item.quantity ?? 0))
         })
       }
-      // Se o pedido estava cancelado e agora está ativo: reaplicar o valor
-      else if (!wasActive && isNowActive) {
-        updateContractUsage(orderToUpdate.contractId, orderToUpdate.totalValue)
-        orderToUpdate.items.forEach((item) => {
+
+      // 2. Aplicar o novo saldo se o pedido está ativo agora
+      if (isNowActive) {
+        const finalItems = orderUpdate.items ?? orderToUpdate.items
+        const finalTotalValue = orderUpdate.totalValue ?? orderToUpdate.totalValue
+        updateContractUsage(orderToUpdate.contractId, finalTotalValue)
+        finalItems.forEach((item) => {
           updateContractItemUsage(orderToUpdate.contractId, item.contractItemId, item.quantity ?? 0)
         })
       }
+    }
 
+    if (orderUpdate.status && orderToUpdate.status !== orderUpdate.status) {
       notifyStatusChange({ ...orderToUpdate, ...orderUpdate }, orderToUpdate.status)
     }
 
