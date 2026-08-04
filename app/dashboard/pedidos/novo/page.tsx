@@ -298,7 +298,7 @@ export default function NovoPedidoPage() {
       setCurrentStep("supplier")
     } else if (currentStep === "supplier" && selectedSupplierId) {
       setCurrentStep("products")
-    } else if (currentStep === "products" && selectedProducts.length > 0 && !isOverLimit) {
+    } else if (currentStep === "products" && selectedProducts.length > 0) {
       setCurrentStep("review")
     }
   }
@@ -1144,10 +1144,11 @@ export default function NovoPedidoPage() {
                   </div>
 
                   {isOverLimit && (
-                    <Alert variant="destructive" className="mt-2">
-                      <AlertTitle>Limite excedido!</AlertTitle>
-                      <AlertDescription>
-                        O valor total do pedido excede o limite disponível do contrato. Reduza a quantidade de produtos.
+                    <Alert className="mt-2 bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-200">
+                      <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      <AlertTitle className="font-bold">Extrapolação de Saldo Global Detectada</AlertTitle>
+                      <AlertDescription className="text-xs">
+                        O valor total deste pedido (<strong>{formatCurrency(totalOrderValue)}</strong>) excede o limite disponível do contrato (<strong>{formatCurrency(contractAvailableLimit)}</strong>) em <strong>{formatCurrency(totalOrderValue - contractAvailableLimit)}</strong>. O pedido poderá ser salvo normalmente e a extrapolação será registrada nos relatórios.
                       </AlertDescription>
                     </Alert>
                   )}
@@ -1314,7 +1315,7 @@ export default function NovoPedidoPage() {
                 )}
                 <Button
                   onClick={handleNext}
-                  disabled={selectedProducts.length === 0 || isOverLimit || !selectedContract?.items.length}
+                  disabled={selectedProducts.length === 0 || !selectedContract?.items.length}
                 >
                   Próximo
                   <ArrowRight className="ml-2 h-4 w-4" />

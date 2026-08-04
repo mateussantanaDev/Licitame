@@ -1,0 +1,2 @@
+[x] QUANDO ADITIVA PRAZO é para resetar saldo, porém mantendo o historico de pedidos anterior, como se existisse dois contratos, o antigo com historico e o novo aonde vai ser consumido
+[x] Fazer logica de reequilibrio de preco para ajustar os valores no momento do aditivo (checkbox + porcentagem de reajuste nos itens)

@@ -13,6 +13,21 @@ import {
 } from "./firebase"
 import { addContractAdjustment } from "./contract-adjustments"
 
+export type ContractPeriod = {
+  id: string
+  addendumId?: string
+  addendumNumber?: string
+  name: string
+  startDate: string
+  expirationDate: string
+  value: number
+  usedValue: number
+  usedPercentage: number
+  items: ContractItem[]
+  createdAt: string
+  description?: string
+}
+
 export type Contract = {
   id: string
   number: string
@@ -41,6 +56,8 @@ export type Contract = {
   validityMonths?: number
   balanceAdjustments?: BalanceAdjustment[]
   addendums?: ContractAddendum[]
+  previousPeriods?: ContractPeriod[]
+  activePeriodId?: string
 }
 
 export type ContractItem = {
@@ -70,6 +87,9 @@ export type ContractAddendum = {
   description: string
   date: string
   createdAt?: string
+  resetBalance?: boolean
+  rebalancePercent?: number
+  updatedItems?: ContractItem[]
 }
 
 type ContractsContextType = {
@@ -174,6 +194,8 @@ const transformFirebaseContract = (data: any): Contract => {
     signatureDate: data.data_assinatura || data.signatureDate || "",
     validityMonths: data.vigencia_meses || data.validityMonths || 0,
     addendums: data.addendums || [],
+    previousPeriods: data.previousPeriods || [],
+    activePeriodId: data.activePeriodId || undefined,
   }
 }
 
@@ -572,8 +594,9 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
     setContracts((prevContracts) => {
       let changed = false
       const updated = prevContracts.map((contract) => {
+        // Pedidos ativos para o período vigente atual (sem periodId ou com periodId coincidente com activePeriodId)
         const activeOrders = ordersList.filter(
-          (o) => o.contractId === contract.id && o.status !== "cancelado"
+          (o) => o.contractId === contract.id && o.status !== "cancelado" && (!o.periodId || o.periodId === contract.activePeriodId)
         )
 
         const ordersTotal = activeOrders.reduce((sum, o) => sum + Number(o.totalValue || 0), 0)
@@ -593,10 +616,36 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           }
         })
 
+        // Recalcular períodos anteriores se existirem
+        let updatedPreviousPeriods = contract.previousPeriods
+        if (contract.previousPeriods && contract.previousPeriods.length > 0) {
+          updatedPreviousPeriods = contract.previousPeriods.map((period) => {
+            const periodOrders = ordersList.filter(
+              (o) => o.contractId === contract.id && o.status !== "cancelado" && o.periodId === period.id
+            )
+            const periodOrdersTotal = periodOrders.reduce((sum, o) => sum + Number(o.totalValue || 0), 0)
+            const periodUsedPercentage = period.value > 0 ? Math.round((periodOrdersTotal / period.value) * 100) : 0
+            const periodItems = period.items.map((pItem) => {
+              const pItemUsedQty = periodOrders.reduce((sum, o) => {
+                const orderItem = (o.items || []).find((i: any) => i.contractItemId === pItem.id || i.id === pItem.id)
+                return sum + (orderItem ? Number(orderItem.quantity) || 0 : 0)
+              }, 0)
+              return { ...pItem, usedQuantity: pItemUsedQty }
+            })
+            return {
+              ...period,
+              usedValue: periodOrdersTotal,
+              usedPercentage: periodUsedPercentage,
+              items: periodItems,
+            }
+          })
+        }
+
         const hasValueChanged = contract.usedValue !== realUsedValue || contract.usedPercentage !== newUsedPercentage
         const hasItemsChanged = contract.items.some((item, idx) => item.usedQuantity !== updatedItems[idx]?.usedQuantity)
+        const hasPeriodsChanged = JSON.stringify(contract.previousPeriods) !== JSON.stringify(updatedPreviousPeriods)
 
-        if (!hasValueChanged && !hasItemsChanged) {
+        if (!hasValueChanged && !hasItemsChanged && !hasPeriodsChanged) {
           return contract
         }
 
@@ -606,6 +655,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           usedValue: realUsedValue,
           usedPercentage: newUsedPercentage,
           items: updatedItems,
+          previousPeriods: updatedPreviousPeriods,
         }
 
         if (isFirebaseConfigured()) {
@@ -614,6 +664,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
             usedValue: realUsedValue,
             itens: updatedItems,
             items: updatedItems,
+            ...(updatedPreviousPeriods && { previousPeriods: updatedPreviousPeriods }),
           })
         }
 
@@ -729,32 +780,108 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
 
       const updatedAddendums = [...(contract.addendums || []), newAddendum]
       
-      // Aplicar alterações ao contrato conforme o tipo de aditivo
-      let updatedContractData: Partial<Contract> = {
-        addendums: updatedAddendums,
+      const shouldResetBalance = Boolean(addendum.resetBalance)
+      let updatedPreviousPeriods = contract.previousPeriods ? [...contract.previousPeriods] : []
+      let updatedItems = [...(contract.items || [])]
+      let updatedValue = contract.value
+      let updatedUsedValue = contract.usedValue
+      let updatedUsedPercentage = contract.usedPercentage
+      let newExpirationDate = contract.expirationDate
+      let activePeriodId = contract.activePeriodId
+
+      if (shouldResetBalance) {
+        const closedPeriodId = `period_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        const periodCount = (contract.previousPeriods?.length || 0) + 1
+        
+        const closedPeriod: ContractPeriod = {
+          id: closedPeriodId,
+          addendumId: newAddendum.id,
+          addendumNumber: newAddendum.number,
+          name: periodCount === 1 ? `Vigência Inicial (até ${new Date(contract.expirationDate).toLocaleDateString('pt-BR')})` : `${periodCount - 1}ª Vigência Aditivada`,
+          startDate: contract.startDate,
+          expirationDate: contract.expirationDate,
+          value: contract.value,
+          usedValue: contract.usedValue,
+          usedPercentage: contract.usedPercentage,
+          items: contract.items.map((i) => ({ ...i })),
+          createdAt: new Date().toISOString(),
+          description: addendum.description,
+        }
+
+        updatedPreviousPeriods.push(closedPeriod)
+        updatedUsedValue = 0
+        updatedUsedPercentage = 0
+        activePeriodId = `active_${Date.now()}`
       }
 
       if (addendum.type === "vencimento" && addendum.newValue) {
-        updatedContractData.expirationDate = addendum.newValue
+        newExpirationDate = addendum.newValue
       } else if (addendum.type === "valor" && addendum.newValue) {
         const newValue = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : addendum.newValue
-        updatedContractData.value = newValue
+        updatedValue = newValue
       } else if (addendum.type === "produto" && Array.isArray(addendum.newValue)) {
-        updatedContractData.items = [...(contract.items || []), ...addendum.newValue]
+        updatedItems = [...updatedItems, ...addendum.newValue]
       }
 
-      const updatedContract = {
+      // Tratar Reequilíbrio de Preço se informado no aditivo
+      if (addendum.updatedItems && Array.isArray(addendum.updatedItems)) {
+        updatedItems = addendum.updatedItems.map((item) => ({
+          ...item,
+          usedQuantity: shouldResetBalance ? 0 : item.usedQuantity,
+        }))
+        updatedValue = updatedItems.reduce((sum, item) => sum + Number(item.totalPrice || 0), 0)
+      } else if (addendum.rebalancePercent && addendum.rebalancePercent > 0) {
+        const factor = 1 + addendum.rebalancePercent / 100
+        updatedItems = updatedItems.map((item) => {
+          const newUnitPrice = Number((item.unitPrice * factor).toFixed(2))
+          const newTotalPrice = Number((newUnitPrice * item.quantity).toFixed(2))
+          return {
+            ...item,
+            unitPrice: newUnitPrice,
+            totalPrice: newTotalPrice,
+            usedQuantity: shouldResetBalance ? 0 : item.usedQuantity,
+          }
+        })
+        updatedValue = updatedItems.reduce((sum, item) => sum + item.totalPrice, 0)
+      } else if (shouldResetBalance) {
+        // Resetar consumos apenas se a flag de reset de saldo foi ativada
+        updatedItems = updatedItems.map((item) => ({
+          ...item,
+          usedQuantity: 0,
+        }))
+      }
+
+      if (!shouldResetBalance && updatedValue > 0) {
+        updatedUsedPercentage = Math.round((updatedUsedValue / updatedValue) * 100)
+      }
+
+      const updatedContract: Contract = {
         ...contract,
-        ...updatedContractData,
+        addendums: updatedAddendums,
+        previousPeriods: updatedPreviousPeriods,
+        expirationDate: newExpirationDate,
+        value: updatedValue,
+        usedValue: updatedUsedValue,
+        usedPercentage: updatedUsedPercentage,
+        items: updatedItems,
+        activePeriodId,
       }
 
       // Salvar no Firebase
       if (isFirebaseConfigured()) {
         const dataToUpdate = {
           addendums: updatedAddendums,
-          ...(updatedContractData.expirationDate && { data_vencimento: updatedContractData.expirationDate }),
-          ...(updatedContractData.value && { valor_total_contrato: updatedContractData.value }),
-          ...(updatedContractData.items && { items: updatedContractData.items }),
+          previousPeriods: updatedPreviousPeriods,
+          activePeriodId,
+          data_vencimento: newExpirationDate,
+          expirationDate: newExpirationDate,
+          valor_total_contrato: updatedValue,
+          value: updatedValue,
+          valor_utilizado: updatedUsedValue,
+          usedValue: updatedUsedValue,
+          usedPercentage: updatedUsedPercentage,
+          items: updatedItems,
+          itens: updatedItems,
         }
         await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
       }

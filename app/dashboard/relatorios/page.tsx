@@ -179,6 +179,7 @@ export default function RelatoriosPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="extrapolado">Extrapolado</SelectItem>
                       <SelectItem value="ativo">Ativo</SelectItem>
                       <SelectItem value="vencido">Vencido</SelectItem>
                       <SelectItem value="expirado">Expirado</SelectItem>

@@ -36,6 +36,7 @@ export type Order = {
   deliveryDate?: string
   priority?: "low" | "medium" | "high"
   notes?: string
+  periodId?: string
   deliveryNote?: {
     number: string
     date: string
@@ -63,6 +64,7 @@ type OrdersContextType = {
   verifyDeliveryNote: (orderId: string, matches: boolean) => void
   approveOrder: (orderId: string) => void
   rejectOrder: (orderId: string, reason: string) => void
+  tagOrdersWithPeriod: (contractId: string, periodId: string) => Promise<void>
   exportData: () => void
   importData: (data: Order[]) => Promise<boolean>
   notifyNewOrder: (order: Order) => void
@@ -288,6 +290,19 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const tagOrdersWithPeriod = async (contractId: string, periodId: string) => {
+    const updatedOrders = orders.map((order) => {
+      if (order.contractId === contractId && !order.periodId) {
+        if (isFirebaseConfigured()) {
+          updateDocument(COLLECTIONS.ORDERS, order.id, { periodId })
+        }
+        return { ...order, periodId }
+      }
+      return order
+    })
+    setOrders(updatedOrders)
+  }
+
   return (
     <OrdersContext.Provider
       value={{
@@ -301,6 +316,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
         verifyDeliveryNote,
         approveOrder,
         rejectOrder,
+        tagOrdersWithPeriod,
         exportData,
         importData,
         notifyNewOrder,
