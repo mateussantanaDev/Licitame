@@ -217,15 +217,20 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       const contractsToUpdate: { id: string; contract: Contract }[] = []
 
       const updatedContracts = contracts.map((contract) => {
+        const expirationDate = new Date(contract.expirationDate)
         // Se o contrato está ativo e já passou da data de vencimento
-        if (contract.status === "ativo") {
-          const expirationDate = new Date(contract.expirationDate)
-          if (expirationDate <= now && contract.status !== "vencido") {
-            hasChanges = true
-            const updatedContract = { ...contract, status: "vencido" as const }
-            contractsToUpdate.push({ id: contract.id, contract: updatedContract })
-            return updatedContract
-          }
+        if (contract.status === "ativo" && expirationDate <= now) {
+          hasChanges = true
+          const updatedContract = { ...contract, status: "vencido" as const }
+          contractsToUpdate.push({ id: contract.id, contract: updatedContract })
+          return updatedContract
+        }
+        // Se o contrato está vencido mas a data de vencimento foi prorrogada para o futuro
+        if (contract.status === "vencido" && expirationDate > now) {
+          hasChanges = true
+          const updatedContract = { ...contract, status: "ativo" as const }
+          contractsToUpdate.push({ id: contract.id, contract: updatedContract })
+          return updatedContract
         }
         return contract
       })
@@ -233,14 +238,14 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       // Atualizar apenas se houve mudanças
       if (hasChanges) {
         setContracts(updatedContracts)
-        console.log(`${contractsToUpdate.length} contrato(s) foram marcados como vencido(s) automaticamente`)
+        console.log(`${contractsToUpdate.length} contrato(s) tiveram o status atualizado automaticamente`)
 
         // Salvar as mudanças no Firebase
         const isConfigured = isFirebaseConfigured()
         if (isConfigured) {
           try {
             for (const { id, contract } of contractsToUpdate) {
-              await updateDocument(COLLECTIONS.CONTRACTS, id, { status: "vencido" })
+              await updateDocument(COLLECTIONS.CONTRACTS, id, { status: contract.status, situacao: contract.status })
             }
             console.log("Alterações de status salvas no Firebase")
           } catch (error) {
@@ -817,8 +822,8 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       if (addendum.type === "vencimento" && addendum.newValue) {
         newExpirationDate = addendum.newValue
       } else if (addendum.type === "valor" && addendum.newValue) {
-        const newValue = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : addendum.newValue
-        updatedValue = newValue
+        const addedValue = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : Number(addendum.newValue)
+        updatedValue = Number(contract.value || 0) + (isNaN(addedValue) ? 0 : addedValue)
       } else if (addendum.type === "produto" && Array.isArray(addendum.newValue)) {
         updatedItems = [...updatedItems, ...addendum.newValue]
       }
@@ -855,6 +860,12 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         updatedUsedPercentage = Math.round((updatedUsedValue / updatedValue) * 100)
       }
 
+      // Atualizar o status do contrato de "vencido" para "ativo" se a nova data for futura
+      let updatedStatus = contract.status
+      if (new Date(newExpirationDate) > new Date() && contract.status === "vencido") {
+        updatedStatus = "ativo"
+      }
+
       const updatedContract: Contract = {
         ...contract,
         addendums: updatedAddendums,
@@ -865,6 +876,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         usedPercentage: updatedUsedPercentage,
         items: updatedItems,
         activePeriodId,
+        status: updatedStatus,
       }
 
       // Salvar no Firebase
@@ -882,6 +894,8 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           usedPercentage: updatedUsedPercentage,
           items: updatedItems,
           itens: updatedItems,
+          status: updatedStatus,
+          situacao: updatedStatus,
         }
         await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
       }

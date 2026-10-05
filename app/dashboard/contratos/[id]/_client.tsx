@@ -289,7 +289,9 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         number: `${contract.number}-ADIT-${(contract.addendums?.length || 0) + 1}`,
         type: addendumType,
         originalValue: addendumType === "vencimento" ? contract.expirationDate : addendumType === "valor" ? contract.value : undefined,
-        newValue: addendumType === "vencimento" ? new Date(addendumNewValue).toISOString() : newValue,
+        newValue: addendumType === "vencimento" 
+          ? (addendumNewValue.includes("T") ? new Date(addendumNewValue).toISOString() : new Date(`${addendumNewValue}T23:59:59`).toISOString()) 
+          : newValue,
         description: addendumDescription,
         date: new Date().toISOString(),
         resetBalance: resetBalance,
