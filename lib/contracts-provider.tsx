@@ -193,9 +193,9 @@ const transformFirebaseContract = (data: any): Contract => {
     totalValue: totalValue,
     signatureDate: data.data_assinatura || data.signatureDate || "",
     validityMonths: data.vigencia_meses || data.validityMonths || 0,
-    addendums: data.addendums || [],
-    previousPeriods: data.previousPeriods || [],
-    activePeriodId: data.activePeriodId || undefined,
+    addendums: data.addendums || data.aditivos || [],
+    previousPeriods: data.previousPeriods || data.periodos_anteriores || [],
+    activePeriodId: data.activePeriodId || data.active_period_id || undefined,
   }
 }
 
@@ -883,6 +883,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       if (isFirebaseConfigured()) {
         const dataToUpdate = {
           addendums: updatedAddendums,
+          aditivos: updatedAddendums,
           previousPeriods: updatedPreviousPeriods,
           activePeriodId,
           data_vencimento: newExpirationDate,
@@ -897,7 +898,19 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           status: updatedStatus,
           situacao: updatedStatus,
         }
-        await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
+        const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
+        if (!success) {
+          ValidationLogger.log(
+            "error",
+            "contracts",
+            "addAddendum",
+            { valid: false, errors: [{ field: "firebase", message: "Falha ao salvar aditivo no Firebase" }], warnings: [] },
+            "Falha ao salvar aditivo no Firebase",
+            undefined,
+            { contractId }
+          )
+          return false
+        }
       }
 
       setContracts((prev) =>

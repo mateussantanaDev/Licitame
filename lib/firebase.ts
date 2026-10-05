@@ -153,16 +153,34 @@ export async function getDocumentById<T>(collectionName: string, id: string): Pr
   }
 }
 
+function removeUndefined<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj
+  if (Array.isArray(obj)) {
+    return obj.map((item) => removeUndefined(item)) as unknown as T
+  }
+  if (typeof obj === "object" && !(obj instanceof Date)) {
+    const cleaned: Record<string, any> = {}
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = removeUndefined(value)
+      }
+    }
+    return cleaned as T
+  }
+  return obj
+}
+
 export async function addDocument<T extends object>(collectionName: string, data: T): Promise<string | null> {
   if (!isFirebaseConfigured()) return null
   
   try {
     const db = getFirestoreDb()
-    const docRef = await addDoc(collection(db, collectionName), {
+    const cleanedData = removeUndefined({
       ...data,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })
+    const docRef = await addDoc(collection(db, collectionName), cleanedData)
     return docRef.id
   } catch (error) {
     console.error(`Error adding document to ${collectionName}:`, error)
@@ -180,10 +198,11 @@ export async function setDocument<T extends object>(
   try {
     const db = getFirestoreDb()
     const docRef = doc(db, collectionName, id)
-    await setDoc(docRef, {
+    const cleanedData = removeUndefined({
       ...data,
       updatedAt: new Date().toISOString(),
-    }, { merge: true })
+    })
+    await setDoc(docRef, cleanedData, { merge: true })
     return true
   } catch (error) {
     console.error(`Error setting document ${id} in ${collectionName}:`, error)
@@ -201,10 +220,11 @@ export async function updateDocument<T extends object>(
   try {
     const db = getFirestoreDb()
     const docRef = doc(db, collectionName, id)
-    await setDoc(docRef, {
+    const cleanedData = removeUndefined({
       ...data,
       updatedAt: new Date().toISOString(),
-    }, { merge: true })
+    })
+    await setDoc(docRef, cleanedData, { merge: true })
     return true
   } catch (error) {
     console.error(`Error updating document ${id} in ${collectionName}:`, error)
