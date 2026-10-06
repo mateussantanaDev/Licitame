@@ -1367,6 +1367,8 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         recalculateContractBalances,
         addBalanceAdjustment,
         addAddendum,
+        editAddendum,
+        deleteAddendum,
         exportData,
         importData,
       }}
