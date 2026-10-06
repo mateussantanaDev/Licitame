@@ -19,8 +19,94 @@ import { Separator } from "@/components/ui/separator"
 import { DatePicker } from "@/components/ui/date-picker"
 import { NavigationProgress } from "@/components/navigation-progress"
 import { LoadingSpinner } from "@/components/loading-spinner"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
-import { ArrowLeft, Building, FileText, AlertCircle, CheckCircle2, Plus, Trash2 } from "lucide-react"
+import { ArrowLeft, Building, FileText, AlertCircle, CheckCircle2, Plus, Trash2, Check, ChevronsUpDown, Search } from "lucide-react"
+
+function SupplierCombobox({
+  suppliers,
+  value,
+  onSelect,
+}: {
+  suppliers: Array<{ id: string; name: string; cnpj?: string }>
+  value: string
+  onSelect: (supplierId: string, supplierName?: string, supplierCnpj?: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+
+  const selectedSupplier = suppliers.find((s) => s.id === value)
+
+  const filteredSuppliers = suppliers.filter((s) => {
+    const term = search.toLowerCase().trim()
+    if (!term) return true
+    return s.name.toLowerCase().includes(term) || (s.cnpj && s.cnpj.includes(term))
+  })
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal bg-background text-left"
+        >
+          {selectedSupplier ? (
+            <span className="truncate font-medium">
+              {selectedSupplier.name} {selectedSupplier.cnpj ? `(${selectedSupplier.cnpj})` : ""}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Escolha um fornecedor...</span>
+          )}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[320px] p-2" align="start">
+        <div className="space-y-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Pesquisar por nome ou CNPJ/CPF..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 text-sm h-9"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-60 overflow-y-auto space-y-1">
+            {filteredSuppliers.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                Nenhum fornecedor encontrado.
+              </p>
+            ) : (
+              filteredSuppliers.map((supplier) => (
+                <button
+                  key={supplier.id}
+                  type="button"
+                  onClick={() => {
+                    onSelect(supplier.id, supplier.name, supplier.cnpj)
+                    setOpen(false)
+                    setSearch("")
+                  }}
+                  className={`w-full flex items-center justify-between py-2 px-2.5 rounded-md text-left text-sm hover:bg-accent transition-colors ${
+                    value === supplier.id ? "bg-accent/60 font-medium" : ""
+                  }`}
+                >
+                  <div className="flex flex-col overflow-hidden mr-2">
+                    <span className="font-medium text-sm truncate">{supplier.name}</span>
+                    {supplier.cnpj && <span className="text-xs text-muted-foreground">{supplier.cnpj}</span>}
+                  </div>
+                  {value === supplier.id && <Check className="h-4 w-4 text-primary shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export default function EditarContratoPage({ params }: { params: { id: string } }) {
   const router = useRouter()
@@ -460,18 +546,25 @@ export default function EditarContratoPage({ params }: { params: { id: string } 
 
                   <div className="space-y-2">
                     <Label htmlFor="supplierId">Selecionar Fornecedor</Label>
-                    <Select value={formData.supplierId || ""} onValueChange={(value) => handleSelectChange("supplierId", value)}>
-                      <SelectTrigger id="supplierId">
-                        <SelectValue placeholder="Escolha um fornecedor..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {suppliers.map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SupplierCombobox
+                      suppliers={suppliers}
+                      value={formData.supplierId || ""}
+                      onSelect={(supplierId, supplierName, supplierCnpj) => {
+                        setFormData((prev) => ({
+                          ...prev,
+                          supplierId,
+                          ...(supplierName ? { company: supplierName } : {}),
+                          ...(supplierCnpj ? { cnpj: supplierCnpj } : {}),
+                        }))
+                        if (errors.supplierId) {
+                          setErrors((prev) => {
+                            const newErrors = { ...prev }
+                            delete newErrors.supplierId
+                            return newErrors
+                          })
+                        }
+                      }}
+                    />
                   </div>
 
                   <div className="space-y-2">
