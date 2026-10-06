@@ -187,6 +187,42 @@ const transformFirebaseContract = (data: any): Contract => {
     finalStatus = "vencido"
   }
 
+  // Mapear aditivos - garantir ID estável e suporte a campos legados
+  const rawAddendums = data.addendums || data.aditivos || []
+  const transformedAddendums: ContractAddendum[] = Array.isArray(rawAddendums)
+    ? rawAddendums.map((addendum: any, idx: number) => ({
+        id: String(addendum.id || addendum.id_aditivo || `adit_${idx}_${Date.now()}`),
+        number: String(addendum.number || addendum.numero || `Aditivo ${idx + 1}`),
+        type: (addendum.type || addendum.tipo || "outros") as any,
+        originalValue: addendum.originalValue !== undefined ? addendum.originalValue : addendum.valor_anterior,
+        newValue: addendum.newValue !== undefined ? addendum.newValue : addendum.novo_valor,
+        valueMode: addendum.valueMode || (addendum.modo_valor === "adicao" ? "addition" : "total"),
+        description: String(addendum.description || addendum.descricao || ""),
+        date: parseDate(addendum.date || addendum.data),
+        createdAt: parseDate(addendum.createdAt || addendum.criado_em || addendum.date || addendum.data),
+        resetBalance: addendum.resetBalance !== undefined ? addendum.resetBalance : addendum.resetar_saldo,
+        rebalancePercent: addendum.rebalancePercent !== undefined ? addendum.rebalancePercent : addendum.percentual_reequilibrio,
+        updatedItems: addendum.updatedItems || addendum.itens_atualizados,
+      }))
+    : []
+
+  // Mapear logs de aditivos
+  const rawAddendumLogs = data.addendumLogs || data.logs_aditivos || []
+  const transformedAddendumLogs: AddendumLog[] = Array.isArray(rawAddendumLogs)
+    ? rawAddendumLogs.map((log: any, idx: number) => ({
+        id: String(log.id || `log_${idx}_${Date.now()}`),
+        contractId: String(log.contractId || log.contrato_id || data.id || ""),
+        addendumId: String(log.addendumId || log.aditivo_id || ""),
+        addendumNumber: String(log.addendumNumber || log.numero_aditivo || "Aditivo"),
+        action: log.action || log.acao || "create",
+        description: String(log.description || log.descricao || ""),
+        timestamp: parseDate(log.timestamp || log.data_hora),
+        userEmail: log.userEmail || log.email_usuario,
+        oldData: log.oldData || log.dados_antigos,
+        newData: log.newData || log.dados_novos,
+      }))
+    : []
+
   return {
     id: data.id || "",
     number: data.numero || data.number || "Não informado",
@@ -212,8 +248,8 @@ const transformFirebaseContract = (data: any): Contract => {
     totalValue: totalValue,
     signatureDate: data.data_assinatura || data.signatureDate || "",
     validityMonths: data.vigencia_meses || data.validityMonths || 0,
-    addendums: data.addendums || data.aditivos || [],
-    addendumLogs: data.addendumLogs || data.logs_aditivos || [],
+    addendums: transformedAddendums,
+    addendumLogs: transformedAddendumLogs,
     previousPeriods: data.previousPeriods || data.periodos_anteriores || [],
     activePeriodId: data.activePeriodId || data.active_period_id || undefined,
     initialValue: data.initialValue || data.valor_inicial || undefined,
@@ -1000,19 +1036,25 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         return false
       }
 
-      const oldAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
-      if (!oldAddendum) {
-        console.error("Aditivo não encontrado:", addendumId)
+      const addendumsList = contract.addendums || []
+      // Buscar por id, numero ou índice do array (0, 1, 2...)
+      const targetIndex = addendumsList.findIndex(
+        (a, idx) => a.id === addendumId || a.number === addendumId || String(idx) === String(addendumId)
+      )
+
+      if (targetIndex === -1) {
+        console.error("Aditivo não encontrado para edição:", addendumId)
         return false
       }
 
+      const oldAddendum = addendumsList[targetIndex]
       const cleanedUpdatedData = JSON.parse(JSON.stringify(updatedData))
       const newAddendum: ContractAddendum = {
         ...oldAddendum,
         ...cleanedUpdatedData,
       }
 
-      const updatedAddendums = (contract.addendums || []).map((a) => (a.id === addendumId ? newAddendum : a))
+      const updatedAddendums = addendumsList.map((a, idx) => (idx === targetIndex ? newAddendum : a))
 
       let newExpirationDate = contract.expirationDate
       let updatedValue = contract.value
@@ -1039,7 +1081,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       const newLog: AddendumLog = JSON.parse(JSON.stringify({
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         contractId,
-        addendumId,
+        addendumId: oldAddendum.id || addendumId,
         addendumNumber: newAddendum.number || "Aditivo",
         action: "edit",
         description: `Aditivo ${newAddendum.number || ""} alterado`,
@@ -1066,6 +1108,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           addendums: updatedAddendums,
           aditivos: updatedAddendums,
           addendumLogs: updatedAddendumLogs,
+          logs_aditivos: updatedAddendumLogs,
           data_vencimento: newExpirationDate,
           expirationDate: newExpirationDate,
           valor_total_contrato: updatedValue,
@@ -1119,13 +1162,19 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         return false
       }
 
-      const deletedAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
-      if (!deletedAddendum) {
+      const addendumsList = contract.addendums || []
+      // Buscar por id, numero ou índice do array (0, 1, 2...)
+      const targetIndex = addendumsList.findIndex(
+        (a, idx) => a.id === addendumId || a.number === addendumId || String(idx) === String(addendumId)
+      )
+
+      if (targetIndex === -1) {
         console.error("Aditivo não encontrado para exclusão:", addendumId)
         return false
       }
 
-      const updatedAddendums = (contract.addendums || []).filter((a) => a.id !== addendumId)
+      const deletedAddendum = addendumsList[targetIndex]
+      const updatedAddendums = addendumsList.filter((_, idx) => idx !== targetIndex)
 
       let newExpirationDate = contract.expirationDate
       let updatedValue = contract.value
@@ -1150,7 +1199,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       const newLog: AddendumLog = JSON.parse(JSON.stringify({
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         contractId,
-        addendumId,
+        addendumId: deletedAddendum.id || addendumId,
         addendumNumber: deletedAddendum.number || "Aditivo",
         action: "delete",
         description: `Aditivo ${deletedAddendum.number || ""} excluído`,
@@ -1176,6 +1225,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           addendums: updatedAddendums,
           aditivos: updatedAddendums,
           addendumLogs: updatedAddendumLogs,
+          logs_aditivos: updatedAddendumLogs,
           data_vencimento: newExpirationDate,
           expirationDate: newExpirationDate,
           valor_total_contrato: updatedValue,
