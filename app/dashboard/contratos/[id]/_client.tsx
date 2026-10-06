@@ -54,6 +54,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   const [isSubmittingAdjustment, setIsSubmittingAdjustment] = useState(false)
   const [showAddAddendumDialog, setShowAddAddendumDialog] = useState(false)
   const [addendumType, setAddendumType] = useState<"vencimento" | "valor" | "produto" | "quantidade" | "outros">("vencimento")
+  const [addendumValueMode, setAddendumValueMode] = useState<"total" | "addition">("total")
   const [addendumNewValue, setAddendumNewValue] = useState("")
   const [addendumDescription, setAddendumDescription] = useState("")
   const [isSubmittingAddendum, setIsSubmittingAddendum] = useState(false)
@@ -288,6 +289,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
       const success = await addAddendum(contract.id, {
         number: `${contract.number}-ADIT-${(contract.addendums?.length || 0) + 1}`,
         type: addendumType,
+        valueMode: addendumType === "valor" ? addendumValueMode : undefined,
         originalValue: addendumType === "vencimento" ? contract.expirationDate : addendumType === "valor" ? contract.value : undefined,
         newValue: addendumType === "vencimento" 
           ? (addendumNewValue.includes("T") ? new Date(addendumNewValue).toISOString() : new Date(`${addendumNewValue}T23:59:59`).toISOString()) 
@@ -1086,12 +1088,40 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
               </div>
             )}
 
+            {addendumType === "valor" && (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-gray-700">O valor digitado abaixo representa:</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <label className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${addendumValueMode === "total" ? "bg-primary/10 border-primary font-semibold text-primary" : "bg-background border-gray-200"}`}>
+                    <input
+                      type="radio"
+                      name="valueMode"
+                      checked={addendumValueMode === "total"}
+                      onChange={() => setAddendumValueMode("total")}
+                      className="text-primary focus:ring-primary"
+                    />
+                    <span>Novo Valor Total Global</span>
+                  </label>
+                  <label className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${addendumValueMode === "addition" ? "bg-primary/10 border-primary font-semibold text-primary" : "bg-background border-gray-200"}`}>
+                    <input
+                      type="radio"
+                      name="valueMode"
+                      checked={addendumValueMode === "addition"}
+                      onChange={() => setAddendumValueMode("addition")}
+                      className="text-primary focus:ring-primary"
+                    />
+                    <span>Apenas o Valor do Acréscimo</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
             <div>
               <Label htmlFor="newValue" className="text-sm font-medium">
                 {addendumType === "vencimento" 
                   ? "Nova Data de Vencimento *" 
                   : addendumType === "valor"
-                  ? "Novo Valor *"
+                  ? addendumValueMode === "total" ? "Novo Valor Total do Contrato (R$) *" : "Valor a Adicionar/Acréscimo (R$) *"
                   : "Novo Valor/Descrição *"}
               </Label>
               {addendumType === "vencimento" ? (
@@ -1106,12 +1136,12 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 <Input
                   id="newValue"
                   type="number"
-                  placeholder="0,00"
+                  placeholder={addendumValueMode === "total" ? "Ex: 563000,00" : "Ex: 112000,00"}
                   value={addendumNewValue}
                   onChange={(e) => setAddendumNewValue(e.target.value)}
                   step="0.01"
                   min="0"
-                  className="mt-2"
+                  className="mt-2 font-mono font-semibold"
                 />
               ) : (
                 <Input
@@ -1128,10 +1158,34 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   Vencimento atual: {new Date(contract.expirationDate).toLocaleDateString("pt-BR")}
                 </p>
               )}
-              {addendumType === "valor" && contract?.value && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Valor atual: {formatCurrency(contract.value)}
-                </p>
+              {addendumType === "valor" && contract?.value !== undefined && addendumNewValue && (
+                <div className="mt-3 p-3 bg-muted/40 border rounded-md text-xs space-y-1.5">
+                  <p className="font-semibold text-gray-800">Resumo da Alteração de Valor:</p>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor Atual do Contrato:</span>
+                    <span className="font-mono">{formatCurrency(contract.value)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor do Acréscimo (Aditivo):</span>
+                    <span className="font-mono text-green-700 font-semibold">
+                      +{formatCurrency(
+                        addendumValueMode === "total"
+                          ? Math.max(0, (parseFloat(addendumNewValue) || 0) - contract.value)
+                          : (parseFloat(addendumNewValue) || 0)
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t pt-1.5 font-bold">
+                    <span>Novo Valor Total do Contrato:</span>
+                    <span className="font-mono text-primary text-sm">
+                      {formatCurrency(
+                        addendumValueMode === "total"
+                          ? (parseFloat(addendumNewValue) || 0)
+                          : contract.value + (parseFloat(addendumNewValue) || 0)
+                      )}
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
 

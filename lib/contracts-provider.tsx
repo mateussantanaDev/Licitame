@@ -84,6 +84,7 @@ export type ContractAddendum = {
   type: "vencimento" | "valor" | "produto" | "quantidade" | "outros"
   originalValue?: any
   newValue?: any
+  valueMode?: "total" | "addition"
   description: string
   date: string
   createdAt?: string
@@ -821,9 +822,15 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
 
       if (addendum.type === "vencimento" && addendum.newValue) {
         newExpirationDate = addendum.newValue
-      } else if (addendum.type === "valor" && addendum.newValue) {
-        const addedValue = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : Number(addendum.newValue)
-        updatedValue = Number(contract.value || 0) + (isNaN(addedValue) ? 0 : addedValue)
+      } else if (addendum.type === "valor" && addendum.newValue !== undefined) {
+        const val = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : Number(addendum.newValue)
+        const parsedVal = isNaN(val) ? 0 : val
+        if (addendum.valueMode === "addition") {
+          updatedValue = Number(contract.value || 0) + parsedVal
+        } else {
+          // O valor informado representa o Novo Valor Total do Contrato
+          updatedValue = parsedVal
+        }
       } else if (addendum.type === "produto" && Array.isArray(addendum.newValue)) {
         updatedItems = [...updatedItems, ...addendum.newValue]
       }
