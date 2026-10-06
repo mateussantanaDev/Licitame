@@ -187,30 +187,39 @@ const transformFirebaseContract = (data: any): Contract => {
     finalStatus = "vencido"
   }
 
-  // Mapear aditivos - garantir ID estável e suporte a campos legados
+  // Mapear aditivos - garantir ID estável e determinístico sem alterar a cada parse
   const rawAddendums = data.addendums || data.aditivos || []
   const transformedAddendums: ContractAddendum[] = Array.isArray(rawAddendums)
-    ? rawAddendums.map((addendum: any, idx: number) => ({
-        id: String(addendum.id || addendum.id_aditivo || `adit_${idx}_${Date.now()}`),
-        number: String(addendum.number || addendum.numero || `Aditivo ${idx + 1}`),
-        type: (addendum.type || addendum.tipo || "outros") as any,
-        originalValue: addendum.originalValue !== undefined ? addendum.originalValue : addendum.valor_anterior,
-        newValue: addendum.newValue !== undefined ? addendum.newValue : addendum.novo_valor,
-        valueMode: addendum.valueMode || (addendum.modo_valor === "adicao" ? "addition" : "total"),
-        description: String(addendum.description || addendum.descricao || ""),
-        date: parseDate(addendum.date || addendum.data),
-        createdAt: parseDate(addendum.createdAt || addendum.criado_em || addendum.date || addendum.data),
-        resetBalance: addendum.resetBalance !== undefined ? addendum.resetBalance : addendum.resetar_saldo,
-        rebalancePercent: addendum.rebalancePercent !== undefined ? addendum.rebalancePercent : addendum.percentual_reequilibrio,
-        updatedItems: addendum.updatedItems || addendum.itens_atualizados,
-      }))
+    ? rawAddendums.map((addendum: any, idx: number) => {
+        const num = String(addendum.number || addendum.numero || `Aditivo ${idx + 1}`)
+        const dateStr = addendum.date || addendum.data || addendum.createdAt || addendum.criado_em
+        const stableId = String(
+          addendum.id || 
+          addendum.id_aditivo || 
+          `adit_${idx}_${num.replace(/[^a-zA-Z0-9]/g, '_')}`
+        )
+        return {
+          id: stableId,
+          number: num,
+          type: (addendum.type || addendum.tipo || "outros") as any,
+          originalValue: addendum.originalValue !== undefined ? addendum.originalValue : addendum.valor_anterior,
+          newValue: addendum.newValue !== undefined ? addendum.newValue : addendum.novo_valor,
+          valueMode: addendum.valueMode || (addendum.modo_valor === "adicao" ? "addition" : "total"),
+          description: String(addendum.description || addendum.descricao || ""),
+          date: parseDate(dateStr),
+          createdAt: parseDate(dateStr),
+          resetBalance: addendum.resetBalance !== undefined ? addendum.resetBalance : addendum.resetar_saldo,
+          rebalancePercent: addendum.rebalancePercent !== undefined ? addendum.rebalancePercent : addendum.percentual_reequilibrio,
+          updatedItems: addendum.updatedItems || addendum.itens_atualizados,
+        }
+      })
     : []
 
-  // Mapear logs de aditivos
+  // Mapear logs de aditivos com ID estável
   const rawAddendumLogs = data.addendumLogs || data.logs_aditivos || []
   const transformedAddendumLogs: AddendumLog[] = Array.isArray(rawAddendumLogs)
     ? rawAddendumLogs.map((log: any, idx: number) => ({
-        id: String(log.id || `log_${idx}_${Date.now()}`),
+        id: String(log.id || `log_${idx}_${log.timestamp || log.data_hora || idx}`),
         contractId: String(log.contractId || log.contrato_id || data.id || ""),
         addendumId: String(log.addendumId || log.aditivo_id || ""),
         addendumNumber: String(log.addendumNumber || log.numero_aditivo || "Aditivo"),

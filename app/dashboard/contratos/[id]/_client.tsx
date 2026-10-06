@@ -38,7 +38,7 @@ import { useToast } from "@/hooks/use-toast"
 import { ContractExceededReportDialog } from "@/components/contract-exceeded-report-dialog"
 
 export default function ContratoDetalhesPage({ params }: { params: { id: string } }) {
-  const { getContractById, deleteContract, addBalanceAdjustment, addAddendum, editAddendum, deleteAddendum } = useContracts()
+  const { getContractById, deleteContract, addBalanceAdjustment, addAddendum, editAddendum, deleteAddendum, contracts } = useContracts()
   const { orders, tagOrdersWithPeriod } = useOrders()
   const { generateContractExtrapolationReport } = useReports()
   const { user } = useAuth()
@@ -224,13 +224,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   useEffect(() => {
     const foundContract = getContractById(params.id)
     if (foundContract) {
-      console.log(`[Detalhes] Carregando contrato:`, foundContract)
-      console.log(`[Detalhes] Items do contrato:`, foundContract.items)
       setContract(foundContract)
-    } else {
+    } else if (contracts.length > 0) {
       router.push("/dashboard/contratos")
     }
-  }, [params.id, getContractById, router])
+  }, [params.id, getContractById, router, contracts])
 
   useEffect(() => {
     if (contract) {
@@ -296,12 +294,6 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         setAdjustmentAmount("")
         setAdjustmentDescription("")
         setShowAddAdjustmentDialog(false)
-
-        // Atualizar contrato
-        const updatedContract = getContractById(contract.id)
-        if (updatedContract) {
-          setContract(updatedContract)
-        }
       } else {
         toast({
           title: "Erro",
@@ -425,12 +417,6 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         setRebalancePercent("")
         setShowAddAddendumDialog(false)
         setSelectedPeriodId("active")
-
-        // Atualizar contrato
-        const updatedContract = getContractById(contract.id)
-        if (updatedContract) {
-          setContract(updatedContract)
-        }
       } else {
         toast({
           title: "Erro",
@@ -475,7 +461,8 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         ? (editAddendumNewValue.includes("T") ? new Date(editAddendumNewValue).toISOString() : new Date(`${editAddendumNewValue}T23:59:59`).toISOString())
         : parseFloat(editAddendumNewValue)
 
-      const success = await editAddendum(contract.id, editAddendumTarget.id, {
+      const targetId = editAddendumTarget.id || editAddendumTarget.number
+      const success = await editAddendum(contract.id, targetId, {
         description: editAddendumDescription,
         newValue: parsedVal,
       })
@@ -486,8 +473,6 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
           description: "O aditivo foi alterado e o log de auditoria foi gravado com sucesso.",
         })
         setEditAddendumTarget(null)
-        const updatedContract = getContractById(contract.id)
-        if (updatedContract) setContract(updatedContract)
       } else {
         toast({
           title: "Erro",
@@ -510,15 +495,14 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
     if (!contract || !deleteAddendumTarget) return
     setIsDeletingAddendum(true)
     try {
-      const success = await deleteAddendum(contract.id, deleteAddendumTarget.id)
+      const targetId = deleteAddendumTarget.id || deleteAddendumTarget.number
+      const success = await deleteAddendum(contract.id, targetId)
       if (success) {
         toast({
           title: "Aditivo excluído",
           description: "O aditivo foi removido e a ação foi salva no log de auditoria.",
         })
         setDeleteAddendumTarget(null)
-        const updatedContract = getContractById(contract.id)
-        if (updatedContract) setContract(updatedContract)
       } else {
         toast({
           title: "Erro",

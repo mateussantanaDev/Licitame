@@ -40,3 +40,4 @@ tsconfig.tsbuildinfo
 # Tauri build artifacts
 src-tauri/target/
 
+.env*
