@@ -1,6 +1,6 @@
 export type ValidationLevel = "error" | "warning" | "info"
 export type ValidationDataType = "contracts" | "suppliers" | "products" | "orders" | "users" | "costBases"
-export type ValidationAction = "create" | "update" | "delete" | "import" | "export" | "load"
+export type ValidationAction = "create" | "update" | "delete" | "import" | "export" | "load" | "addAddendum" | "editAddendum" | "deleteAddendum"
 
 export interface ValidationError {
   field: string

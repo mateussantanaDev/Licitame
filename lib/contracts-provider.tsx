@@ -56,8 +56,24 @@ export type Contract = {
   validityMonths?: number
   balanceAdjustments?: BalanceAdjustment[]
   addendums?: ContractAddendum[]
+  addendumLogs?: AddendumLog[]
   previousPeriods?: ContractPeriod[]
   activePeriodId?: string
+  initialValue?: number
+  initialExpirationDate?: string
+}
+
+export type AddendumLog = {
+  id: string
+  contractId: string
+  addendumId: string
+  addendumNumber: string
+  action: "create" | "edit" | "delete"
+  description: string
+  timestamp: string
+  userEmail?: string
+  oldData?: Partial<ContractAddendum>
+  newData?: Partial<ContractAddendum>
 }
 
 export type ContractItem = {
@@ -105,6 +121,8 @@ type ContractsContextType = {
   recalculateContractBalances: (ordersList: any[]) => void
   addBalanceAdjustment: (contractId: string, adjustment: Omit<BalanceAdjustment, "id" | "createdAt">) => Promise<boolean>
   addAddendum: (contractId: string, addendum: Omit<ContractAddendum, "id" | "createdAt">) => Promise<boolean>
+  editAddendum: (contractId: string, addendumId: string, updatedAddendum: Partial<ContractAddendum>) => Promise<boolean>
+  deleteAddendum: (contractId: string, addendumId: string) => Promise<boolean>
   exportData: () => void
   importData: (data: Contract[]) => Promise<boolean>
 }
@@ -195,8 +213,11 @@ const transformFirebaseContract = (data: any): Contract => {
     signatureDate: data.data_assinatura || data.signatureDate || "",
     validityMonths: data.vigencia_meses || data.validityMonths || 0,
     addendums: data.addendums || data.aditivos || [],
+    addendumLogs: data.addendumLogs || data.logs_aditivos || [],
     previousPeriods: data.previousPeriods || data.periodos_anteriores || [],
     activePeriodId: data.activePeriodId || data.active_period_id || undefined,
+    initialValue: data.initialValue || data.valor_inicial || undefined,
+    initialExpirationDate: data.initialExpirationDate || data.vencimento_inicial || undefined,
   }
 }
 
@@ -873,9 +894,22 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         updatedStatus = "ativo"
       }
 
+      const newLog: AddendumLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        contractId,
+        addendumId: newAddendum.id,
+        addendumNumber: newAddendum.number,
+        action: "create",
+        description: `Aditivo ${newAddendum.number} (${newAddendum.type}) registrado`,
+        timestamp: new Date().toISOString(),
+        newData: newAddendum,
+      }
+      const updatedAddendumLogs = [newLog, ...(contract.addendumLogs || [])]
+
       const updatedContract: Contract = {
         ...contract,
         addendums: updatedAddendums,
+        addendumLogs: updatedAddendumLogs,
         previousPeriods: updatedPreviousPeriods,
         expirationDate: newExpirationDate,
         value: updatedValue,
@@ -884,6 +918,8 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         items: updatedItems,
         activePeriodId,
         status: updatedStatus,
+        initialValue: contract.initialValue !== undefined ? contract.initialValue : contract.value,
+        initialExpirationDate: contract.initialExpirationDate || contract.expirationDate,
       }
 
       // Salvar no Firebase
@@ -891,6 +927,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         const dataToUpdate = {
           addendums: updatedAddendums,
           aditivos: updatedAddendums,
+          addendumLogs: updatedAddendumLogs,
           previousPeriods: updatedPreviousPeriods,
           activePeriodId,
           data_vencimento: newExpirationDate,
@@ -904,6 +941,8 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           itens: updatedItems,
           status: updatedStatus,
           situacao: updatedStatus,
+          initialValue: contract.initialValue !== undefined ? contract.initialValue : contract.value,
+          initialExpirationDate: contract.initialExpirationDate || contract.expirationDate,
         }
         const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
         if (!success) {
@@ -944,6 +983,217 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         "Erro ao adicionar aditivo",
         undefined,
         { error: error instanceof Error ? error.message : String(error), contractId }
+      )
+      return false
+    }
+  }
+
+  const editAddendum = async (
+    contractId: string,
+    addendumId: string,
+    updatedData: Partial<ContractAddendum>
+  ): Promise<boolean> => {
+    try {
+      const contract = contracts.find((c) => c.id === contractId)
+      if (!contract) return false
+
+      const oldAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
+      if (!oldAddendum) return false
+
+      const newAddendum: ContractAddendum = {
+        ...oldAddendum,
+        ...updatedData,
+      }
+
+      const updatedAddendums = (contract.addendums || []).map((a) => (a.id === addendumId ? newAddendum : a))
+
+      let newExpirationDate = contract.expirationDate
+      let updatedValue = contract.value
+
+      if (newAddendum.type === "vencimento" && newAddendum.newValue) {
+        newExpirationDate = newAddendum.newValue
+      } else if (newAddendum.type === "valor" && newAddendum.newValue !== undefined) {
+        const val = typeof newAddendum.newValue === "string" ? parseFloat(newAddendum.newValue) : Number(newAddendum.newValue)
+        const parsedVal = isNaN(val) ? 0 : val
+        if (newAddendum.valueMode === "addition") {
+          const prevAdded = typeof oldAddendum.newValue === "string" ? parseFloat(oldAddendum.newValue) : Number(oldAddendum.newValue || 0)
+          const baseVal = Number(contract.value) - (isNaN(prevAdded) ? 0 : prevAdded)
+          updatedValue = baseVal + parsedVal
+        } else {
+          updatedValue = parsedVal
+        }
+      }
+
+      let updatedStatus = contract.status
+      if (new Date(newExpirationDate) > new Date() && contract.status === "vencido") {
+        updatedStatus = "ativo"
+      }
+
+      const newLog: AddendumLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        contractId,
+        addendumId,
+        addendumNumber: newAddendum.number,
+        action: "edit",
+        description: `Aditivo ${newAddendum.number} alterado`,
+        timestamp: new Date().toISOString(),
+        oldData: oldAddendum,
+        newData: updatedData,
+      }
+
+      const updatedAddendumLogs = [newLog, ...(contract.addendumLogs || [])]
+      const updatedUsedPercentage = updatedValue > 0 ? Math.round((contract.usedValue / updatedValue) * 100) : 0
+
+      const updatedContract: Contract = {
+        ...contract,
+        addendums: updatedAddendums,
+        addendumLogs: updatedAddendumLogs,
+        expirationDate: newExpirationDate,
+        value: updatedValue,
+        usedPercentage: updatedUsedPercentage,
+        status: updatedStatus,
+      }
+
+      if (isFirebaseConfigured()) {
+        const dataToUpdate = {
+          addendums: updatedAddendums,
+          aditivos: updatedAddendums,
+          addendumLogs: updatedAddendumLogs,
+          data_vencimento: newExpirationDate,
+          expirationDate: newExpirationDate,
+          valor_total_contrato: updatedValue,
+          value: updatedValue,
+          usedPercentage: updatedUsedPercentage,
+          status: updatedStatus,
+          situacao: updatedStatus,
+        }
+        const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
+        if (!success) return false
+      }
+
+      setContracts((prev) => prev.map((c) => (c.id === contractId ? updatedContract : c)))
+
+      ValidationLogger.log(
+        "info",
+        "contracts",
+        "editAddendum",
+        { valid: true, errors: [], warnings: [] },
+        `Aditivo ${newAddendum.number} alterado no contrato "${contract.number}"`,
+        undefined,
+        { contractId, addendumId }
+      )
+
+      return true
+    } catch (error) {
+      ValidationLogger.log(
+        "error",
+        "contracts",
+        "editAddendum",
+        { valid: false, errors: [{ field: "", message: error instanceof Error ? error.message : String(error) }], warnings: [] },
+        "Erro ao editar aditivo",
+        undefined,
+        { contractId, addendumId }
+      )
+      return false
+    }
+  }
+
+  const deleteAddendum = async (
+    contractId: string,
+    addendumId: string
+  ): Promise<boolean> => {
+    try {
+      const contract = contracts.find((c) => c.id === contractId)
+      if (!contract) return false
+
+      const deletedAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
+      if (!deletedAddendum) return false
+
+      const updatedAddendums = (contract.addendums || []).filter((a) => a.id !== addendumId)
+
+      let newExpirationDate = contract.initialExpirationDate || contract.expirationDate
+      let updatedValue = contract.initialValue !== undefined ? contract.initialValue : contract.value
+
+      if (deletedAddendum.type === "valor" && deletedAddendum.newValue !== undefined) {
+        const val = typeof deletedAddendum.newValue === "string" ? parseFloat(deletedAddendum.newValue) : Number(deletedAddendum.newValue)
+        const parsedVal = isNaN(val) ? 0 : val
+        if (deletedAddendum.valueMode === "addition") {
+          updatedValue = Math.max(0, Number(contract.value) - parsedVal)
+        } else if (deletedAddendum.originalValue !== undefined && typeof deletedAddendum.originalValue === "number") {
+          updatedValue = Number(deletedAddendum.originalValue)
+        }
+      } else if (deletedAddendum.type === "vencimento" && deletedAddendum.originalValue) {
+        newExpirationDate = String(deletedAddendum.originalValue)
+      }
+
+      let updatedStatus = contract.status
+      if (new Date(newExpirationDate) > new Date() && contract.status === "vencido") {
+        updatedStatus = "ativo"
+      }
+
+      const newLog: AddendumLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        contractId,
+        addendumId,
+        addendumNumber: deletedAddendum.number,
+        action: "delete",
+        description: `Aditivo ${deletedAddendum.number} excluído`,
+        timestamp: new Date().toISOString(),
+        oldData: deletedAddendum,
+      }
+
+      const updatedAddendumLogs = [newLog, ...(contract.addendumLogs || [])]
+      const updatedUsedPercentage = updatedValue > 0 ? Math.round((contract.usedValue / updatedValue) * 100) : 0
+
+      const updatedContract: Contract = {
+        ...contract,
+        addendums: updatedAddendums,
+        addendumLogs: updatedAddendumLogs,
+        expirationDate: newExpirationDate,
+        value: updatedValue,
+        usedPercentage: updatedUsedPercentage,
+        status: updatedStatus,
+      }
+
+      if (isFirebaseConfigured()) {
+        const dataToUpdate = {
+          addendums: updatedAddendums,
+          aditivos: updatedAddendums,
+          addendumLogs: updatedAddendumLogs,
+          data_vencimento: newExpirationDate,
+          expirationDate: newExpirationDate,
+          valor_total_contrato: updatedValue,
+          value: updatedValue,
+          usedPercentage: updatedUsedPercentage,
+          status: updatedStatus,
+          situacao: updatedStatus,
+        }
+        const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
+        if (!success) return false
+      }
+
+      setContracts((prev) => prev.map((c) => (c.id === contractId ? updatedContract : c)))
+
+      ValidationLogger.log(
+        "info",
+        "contracts",
+        "deleteAddendum",
+        { valid: true, errors: [], warnings: [] },
+        `Aditivo ${deletedAddendum.number} excluído do contrato "${contract.number}"`,
+        undefined,
+        { contractId, addendumId }
+      )
+
+      return true
+    } catch (error) {
+      ValidationLogger.log(
+        "error",
+        "contracts",
+        "deleteAddendum",
+        { valid: false, errors: [{ field: "", message: error instanceof Error ? error.message : String(error) }], warnings: [] },
+        "Erro ao excluir aditivo",
+        undefined,
+        { contractId, addendumId }
       )
       return false
     }

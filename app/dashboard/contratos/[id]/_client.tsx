@@ -38,7 +38,7 @@ import { useToast } from "@/hooks/use-toast"
 import { ContractExceededReportDialog } from "@/components/contract-exceeded-report-dialog"
 
 export default function ContratoDetalhesPage({ params }: { params: { id: string } }) {
-  const { getContractById, deleteContract, addBalanceAdjustment, addAddendum } = useContracts()
+  const { getContractById, deleteContract, addBalanceAdjustment, addAddendum, editAddendum, deleteAddendum } = useContracts()
   const { orders, tagOrdersWithPeriod } = useOrders()
   const { generateContractExtrapolationReport } = useReports()
   const { user } = useAuth()
@@ -58,6 +58,14 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   const [addendumNewValue, setAddendumNewValue] = useState("")
   const [addendumDescription, setAddendumDescription] = useState("")
   const [isSubmittingAddendum, setIsSubmittingAddendum] = useState(false)
+
+  // Estados para edição e exclusão de aditivos com log
+  const [deleteAddendumTarget, setDeleteAddendumTarget] = useState<ContractAddendum | null>(null)
+  const [isDeletingAddendum, setIsDeletingAddendum] = useState(false)
+  const [editAddendumTarget, setEditAddendumTarget] = useState<ContractAddendum | null>(null)
+  const [editAddendumDescription, setEditAddendumDescription] = useState("")
+  const [editAddendumNewValue, setEditAddendumNewValue] = useState("")
+  const [isSubmittingEditAddendum, setIsSubmittingEditAddendum] = useState(false)
 
   // Estados para gestão de vigências e reequilíbrio
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("active")
@@ -336,6 +344,94 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
       })
     } finally {
       setIsSubmittingAddendum(false)
+    }
+  }
+
+  const handleOpenEditAddendum = (addendum: ContractAddendum) => {
+    setEditAddendumTarget(addendum)
+    setEditAddendumDescription(addendum.description || "")
+    setEditAddendumNewValue(
+      addendum.type === "vencimento" && addendum.newValue
+        ? new Date(addendum.newValue).toISOString().split("T")[0]
+        : String(addendum.newValue || "")
+    )
+  }
+
+  const handleSaveEditAddendum = async () => {
+    if (!contract || !editAddendumTarget || !editAddendumDescription.trim()) {
+      toast({
+        title: "Erro de validação",
+        description: "Por favor, preencha a descrição/justificativa.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSubmittingEditAddendum(true)
+    try {
+      const parsedVal = editAddendumTarget.type === "vencimento"
+        ? (editAddendumNewValue.includes("T") ? new Date(editAddendumNewValue).toISOString() : new Date(`${editAddendumNewValue}T23:59:59`).toISOString())
+        : parseFloat(editAddendumNewValue)
+
+      const success = await editAddendum(contract.id, editAddendumTarget.id, {
+        description: editAddendumDescription,
+        newValue: parsedVal,
+      })
+
+      if (success) {
+        toast({
+          title: "Aditivo atualizado",
+          description: "O aditivo foi alterado e o log de auditoria foi gravado com sucesso.",
+        })
+        setEditAddendumTarget(null)
+        const updatedContract = getContractById(contract.id)
+        if (updatedContract) setContract(updatedContract)
+      } else {
+        toast({
+          title: "Erro",
+          description: "Não foi possível alterar o aditivo.",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao alterar o aditivo.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmittingEditAddendum(false)
+    }
+  }
+
+  const handleConfirmDeleteAddendum = async () => {
+    if (!contract || !deleteAddendumTarget) return
+    setIsDeletingAddendum(true)
+    try {
+      const success = await deleteAddendum(contract.id, deleteAddendumTarget.id)
+      if (success) {
+        toast({
+          title: "Aditivo excluído",
+          description: "O aditivo foi removido e a ação foi salva no log de auditoria.",
+        })
+        setDeleteAddendumTarget(null)
+        const updatedContract = getContractById(contract.id)
+        if (updatedContract) setContract(updatedContract)
+      } else {
+        toast({
+          title: "Erro",
+          description: "Não foi possível excluir o aditivo.",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Ocorreu um erro ao excluir o aditivo.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsDeletingAddendum(false)
     }
   }
 
@@ -908,8 +1004,8 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   {contract.addendums
                     .sort((a, b) => new Date(b.createdAt || "").getTime() - new Date(a.createdAt || "").getTime())
                     .map((addendum) => (
-                      <div key={addendum.id} className="p-4 border rounded-lg hover:bg-gray-50">
-                        <div className="flex items-start justify-between">
+                      <div key={addendum.id} className="p-4 border rounded-lg hover:bg-gray-50 transition-colors">
+                        <div className="flex items-start justify-between gap-2">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <p className="text-sm font-semibold">{addendum.number}</p>
@@ -956,9 +1052,61 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                               {new Date(addendum.createdAt || addendum.date).toLocaleTimeString("pt-BR")}
                             </p>
                           </div>
+
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-gray-500 hover:text-primary hover:bg-primary/10"
+                              title="Editar Aditivo"
+                              onClick={() => handleOpenEditAddendum(addendum)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-gray-500 hover:text-destructive hover:bg-destructive/10"
+                              title="Excluir Aditivo"
+                              onClick={() => setDeleteAddendumTarget(addendum)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}
+                </div>
+              )}
+
+              {/* Log de Auditoria dos Aditivos */}
+              {contract?.addendumLogs && contract.addendumLogs.length > 0 && (
+                <div className="mt-8 pt-6 border-t space-y-3">
+                  <h4 className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                    <Clock className="h-4 w-4 text-primary" />
+                    Log de Auditoria dos Aditivos ({contract.addendumLogs.length})
+                  </h4>
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {contract.addendumLogs.map((log) => (
+                      <div key={log.id} className="p-3 bg-muted/40 border rounded-md text-xs flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge
+                              variant={log.action === "create" ? "default" : log.action === "edit" ? "outline" : "destructive"}
+                              className="text-[10px] px-1.5 py-0"
+                            >
+                              {log.action === "create" ? "Criado" : log.action === "edit" ? "Editado" : "Excluído"}
+                            </Badge>
+                            <span className="font-semibold text-gray-800">{log.addendumNumber}</span>
+                          </div>
+                          <p className="text-muted-foreground">{log.description}</p>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleDateString("pt-BR")} {new Date(log.timestamp).toLocaleTimeString("pt-BR")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -1338,6 +1486,79 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
             >
               {isSubmittingAddendum ? "Criando..." : "Criar Aditivo"}
             </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo para Editar Aditivo */}
+      <AlertDialog open={!!editAddendumTarget} onOpenChange={(open) => !open && setEditAddendumTarget(null)}>
+        <AlertDialogContent className="sm:max-w-[500px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Editar Aditivo {editAddendumTarget?.number}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Modifique os dados do aditivo. Esta alteração será gravada no log de auditoria do contrato.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-4 py-3">
+            <div>
+              <Label className="text-xs font-semibold">Novo Valor/Data (*)</Label>
+              {editAddendumTarget?.type === "vencimento" ? (
+                <Input
+                  type="date"
+                  value={editAddendumNewValue}
+                  onChange={(e) => setEditAddendumNewValue(e.target.value)}
+                  className="mt-1"
+                />
+              ) : (
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editAddendumNewValue}
+                  onChange={(e) => setEditAddendumNewValue(e.target.value)}
+                  className="mt-1 font-mono font-semibold"
+                />
+              )}
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold">Descrição / Justificativa (*)</Label>
+              <Textarea
+                value={editAddendumDescription}
+                onChange={(e) => setEditAddendumDescription(e.target.value)}
+                className="mt-1 resize-none"
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSubmittingEditAddendum}>Cancelar</AlertDialogCancel>
+            <Button onClick={handleSaveEditAddendum} disabled={isSubmittingEditAddendum || !editAddendumDescription.trim()}>
+              {isSubmittingEditAddendum ? "Salvando..." : "Salvar Alterações"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo para Excluir Aditivo */}
+      <AlertDialog open={!!deleteAddendumTarget} onOpenChange={(open) => !open && setDeleteAddendumTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Aditivo {deleteAddendumTarget?.number}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este aditivo? O valor/prazo do contrato será reajustado e esta ação será registrada no log de auditoria.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingAddendum}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDeleteAddendum}
+              disabled={isDeletingAddendum}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingAddendum ? "Excluindo..." : "Excluir Aditivo"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
