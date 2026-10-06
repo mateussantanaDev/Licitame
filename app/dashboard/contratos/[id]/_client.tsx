@@ -82,6 +82,19 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
     totalPrice: number
   }[]>([])
 
+  const [itemAddendumList, setItemAddendumList] = useState<
+    Array<{
+      id: string
+      name: string
+      description: string
+      quantity: number
+      unitPrice: number
+      totalPrice: number
+      usedQuantity: number
+      isNew?: boolean
+    }>
+  >([])
+
   const isCompras = user?.role === "compras" || user?.role === "admin"
 
   useEffect(() => {
@@ -97,8 +110,66 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
           totalPrice: item.totalPrice,
         }))
       )
+      setItemAddendumList(
+        contract.items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          description: item.description || "",
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          usedQuantity: item.usedQuantity || 0,
+        }))
+      )
     }
   }, [contract, showAddAddendumDialog])
+
+  const handleItemAddendumFieldChange = (
+    id: string,
+    field: "name" | "description" | "quantity" | "unitPrice" | "totalPrice",
+    value: any
+  ) => {
+    setItemAddendumList((prev) =>
+      prev.map((item) => {
+        if (item.id === id) {
+          const updated = { ...item, [field]: value }
+          if (field === "quantity" || field === "unitPrice") {
+            const qty = field === "quantity" ? parseFloat(value) || 0 : item.quantity
+            const price = field === "unitPrice" ? parseFloat(value) || 0 : item.unitPrice
+            updated.quantity = qty
+            updated.unitPrice = price
+            updated.totalPrice = Number((qty * price).toFixed(2))
+          } else if (field === "totalPrice") {
+            const tot = parseFloat(value) || 0
+            updated.totalPrice = tot
+            if (item.quantity > 0) {
+              updated.unitPrice = Number((tot / item.quantity).toFixed(2))
+            }
+          }
+          return updated
+        }
+        return item
+      })
+    )
+  }
+
+  const handleAddItemAddendumRow = () => {
+    const newItem = {
+      id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      name: `Novo Item ${(itemAddendumList.length + 1)}`,
+      description: "",
+      quantity: 1,
+      unitPrice: 0,
+      totalPrice: 0,
+      usedQuantity: 0,
+      isNew: true,
+    }
+    setItemAddendumList((prev) => [...prev, newItem])
+  }
+
+  const handleRemoveItemAddendumRow = (id: string) => {
+    setItemAddendumList((prev) => prev.filter((item) => item.id !== id))
+  }
 
   const handleGlobalRebalancePercentChange = (valStr: string) => {
     setRebalancePercent(valStr)
@@ -250,10 +321,20 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   }
 
   const handleAddAddendum = async () => {
-    if (!contract || !addendumNewValue || !addendumDescription.trim()) {
+    if (!contract || !addendumDescription.trim()) {
       toast({
         title: "Erro de validação",
-        description: "Por favor, preencha todos os campos.",
+        description: "Por favor, informe a descrição ou justificativa do aditivo.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const isItemAddendum = addendumType === "produto" || addendumType === "quantidade"
+    if (!isItemAddendum && !addendumNewValue) {
+      toast({
+        title: "Erro de validação",
+        description: "Por favor, informe a nova data ou valor do aditivo.",
         variant: "destructive",
       })
       return
@@ -261,9 +342,45 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
 
     setIsSubmittingAddendum(true)
     try {
-      const newValue = addendumType === "vencimento" ? addendumNewValue : parseFloat(addendumNewValue)
-      
-      if (addendumType === "valor" && (isNaN(newValue as number) || (newValue as number) <= 0)) {
+      let updatedItems: ContractItem[] | undefined = undefined
+      let finalNewValue: any = undefined
+
+      if (isItemAddendum) {
+        updatedItems = itemAddendumList.map((item) => ({
+          id: item.id,
+          name: item.name.trim() || "Item sem nome",
+          description: item.description || "",
+          quantity: Number(item.quantity) || 0,
+          unitPrice: Number(item.unitPrice) || 0,
+          totalPrice: Number((Number(item.quantity) * Number(item.unitPrice)).toFixed(2)),
+          usedQuantity: resetBalance ? 0 : (item.usedQuantity || 0),
+        }))
+
+        const totalItemsValue = updatedItems.reduce((sum, i) => sum + i.totalPrice, 0)
+        if (addendumValueMode === "total") {
+          finalNewValue = totalItemsValue
+        } else {
+          finalNewValue = parseFloat(addendumNewValue) || Math.max(0, totalItemsValue - contract.value)
+        }
+      } else if (hasRebalance && rebalanceItems.length > 0) {
+        updatedItems = rebalanceItems.map((ri) => {
+          const originalItem = contract.items.find((i) => i.id === ri.id)
+          return {
+            id: ri.id,
+            name: ri.name,
+            description: originalItem?.description || "",
+            quantity: ri.quantity,
+            unitPrice: ri.newUnitPrice,
+            totalPrice: ri.totalPrice,
+            usedQuantity: resetBalance ? 0 : (originalItem?.usedQuantity || 0),
+          }
+        })
+        finalNewValue = addendumType === "vencimento" ? addendumNewValue : parseFloat(addendumNewValue)
+      } else {
+        finalNewValue = addendumType === "vencimento" ? addendumNewValue : parseFloat(addendumNewValue)
+      }
+
+      if (addendumType === "valor" && (isNaN(finalNewValue as number) || (finalNewValue as number) <= 0)) {
         toast({
           title: "Erro de validação",
           description: "O valor deve ser um número maior que zero.",
@@ -279,29 +396,14 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         await tagOrdersWithPeriod(contract.id, closedPeriodId)
       }
 
-      const updatedItems = hasRebalance && rebalanceItems.length > 0
-        ? rebalanceItems.map((ri) => {
-            const originalItem = contract.items.find((i) => i.id === ri.id)
-            return {
-              id: ri.id,
-              name: ri.name,
-              description: originalItem?.description || "",
-              quantity: ri.quantity,
-              unitPrice: ri.newUnitPrice,
-              totalPrice: ri.totalPrice,
-              usedQuantity: resetBalance ? 0 : (originalItem?.usedQuantity || 0),
-            }
-          })
-        : undefined
-
       const success = await addAddendum(contract.id, {
         number: `${contract.number}-ADIT-${(contract.addendums?.length || 0) + 1}`,
         type: addendumType,
-        valueMode: addendumType === "valor" ? addendumValueMode : undefined,
-        originalValue: addendumType === "vencimento" ? contract.expirationDate : addendumType === "valor" ? contract.value : undefined,
+        valueMode: (addendumType === "valor" || isItemAddendum) ? addendumValueMode : undefined,
+        originalValue: addendumType === "vencimento" ? contract.expirationDate : contract.value,
         newValue: addendumType === "vencimento" 
           ? (addendumNewValue.includes("T") ? new Date(addendumNewValue).toISOString() : new Date(`${addendumNewValue}T23:59:59`).toISOString()) 
-          : newValue,
+          : finalNewValue,
         description: addendumDescription,
         date: new Date().toISOString(),
         resetBalance: resetBalance,
@@ -1236,9 +1338,9 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
               </div>
             )}
 
-            {addendumType === "valor" && (
+            {(addendumType === "valor" || addendumType === "produto" || addendumType === "quantidade") && (
               <div className="space-y-2">
-                <Label className="text-xs font-semibold text-gray-700">O valor digitado abaixo representa:</Label>
+                <Label className="text-xs font-semibold text-gray-700">Modo de Cálculo do Aditivo:</Label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <label className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${addendumValueMode === "total" ? "bg-primary/10 border-primary font-semibold text-primary" : "bg-background border-gray-200"}`}>
                     <input
@@ -1248,7 +1350,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                       onChange={() => setAddendumValueMode("total")}
                       className="text-primary focus:ring-primary"
                     />
-                    <span>Novo Valor Total Global</span>
+                    <span>
+                      {addendumType === "valor"
+                        ? "Novo Valor Total Global"
+                        : "Novo Valor Total dos Itens (Gerenciar cada um)"}
+                    </span>
                   </label>
                   <label className={`flex items-center gap-2 p-2 rounded border cursor-pointer transition-colors ${addendumValueMode === "addition" ? "bg-primary/10 border-primary font-semibold text-primary" : "bg-background border-gray-200"}`}>
                     <input
@@ -1258,84 +1364,206 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                       onChange={() => setAddendumValueMode("addition")}
                       className="text-primary focus:ring-primary"
                     />
-                    <span>Apenas o Valor do Acréscimo</span>
+                    <span>
+                      {addendumType === "valor"
+                        ? "Apenas o Valor do Acréscimo"
+                        : "Acréscimo de Valor/Qtd no Item Original"}
+                    </span>
                   </label>
                 </div>
               </div>
             )}
 
-            <div>
-              <Label htmlFor="newValue" className="text-sm font-medium">
-                {addendumType === "vencimento" 
-                  ? "Nova Data de Vencimento *" 
-                  : addendumType === "valor"
-                  ? addendumValueMode === "total" ? "Novo Valor Total do Contrato (R$) *" : "Valor a Adicionar/Acréscimo (R$) *"
-                  : "Novo Valor/Descrição *"}
-              </Label>
-              {addendumType === "vencimento" ? (
-                <Input
-                  id="newValue"
-                  type="date"
-                  value={addendumNewValue}
-                  onChange={(e) => setAddendumNewValue(e.target.value)}
-                  className="mt-2"
-                />
-              ) : addendumType === "valor" ? (
-                <Input
-                  id="newValue"
-                  type="number"
-                  placeholder={addendumValueMode === "total" ? "Ex: 563000,00" : "Ex: 112000,00"}
-                  value={addendumNewValue}
-                  onChange={(e) => setAddendumNewValue(e.target.value)}
-                  step="0.01"
-                  min="0"
-                  className="mt-2 font-mono font-semibold"
-                />
-              ) : (
-                <Input
-                  id="newValue"
-                  type="text"
-                  placeholder="Descreva o novo produto ou quantidade"
-                  value={addendumNewValue}
-                  onChange={(e) => setAddendumNewValue(e.target.value)}
-                  className="mt-2"
-                />
-              )}
-              {addendumType === "vencimento" && contract?.expirationDate && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Vencimento atual: {new Date(contract.expirationDate).toLocaleDateString("pt-BR")}
+            {/* Gerenciamento de Itens quando modo 'total' para Produto / Quantidade */}
+            {(addendumType === "produto" || addendumType === "quantidade") && addendumValueMode === "total" && (
+              <div className="space-y-3 p-3 bg-muted/20 rounded-lg border">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold flex items-center gap-1.5">
+                    <FileText className="h-4 w-4 text-primary" />
+                    Gerenciar Novo Valor Total de Cada Item
+                  </Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddItemAddendumRow}
+                    className="h-7 text-xs bg-background"
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    Adicionar Novo Item
+                  </Button>
+                </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                  Altere a quantidade, valor unitário ou total individual de cada item. Novos totais serão calculados automaticamente.
                 </p>
-              )}
-              {addendumType === "valor" && contract?.value !== undefined && addendumNewValue && (
-                <div className="mt-3 p-3 bg-muted/40 border rounded-md text-xs space-y-1.5">
-                  <p className="font-semibold text-gray-800">Resumo da Alteração de Valor:</p>
+
+                <div className="max-h-60 overflow-y-auto rounded border bg-background">
+                  <Table className="text-xs">
+                    <TableHeader>
+                      <TableRow className="h-8">
+                        <TableHead className="py-1">Nome do Item</TableHead>
+                        <TableHead className="py-1 text-right w-20">Qtd</TableHead>
+                        <TableHead className="py-1 text-right w-24">Unitário (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-28">Total (R$)</TableHead>
+                        <TableHead className="py-1 text-center w-10"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {itemAddendumList.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                            Nenhum item cadastrado. Clique em "+ Adicionar Novo Item".
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        itemAddendumList.map((item) => (
+                          <TableRow key={item.id} className="h-9">
+                            <TableCell className="py-1 font-medium min-w-[120px]">
+                              <Input
+                                type="text"
+                                value={item.name}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "name", e.target.value)}
+                                className="h-7 text-xs bg-background"
+                              />
+                            </TableCell>
+                            <TableCell className="py-1 text-right">
+                              <Input
+                                type="number"
+                                value={item.quantity}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "quantity", e.target.value)}
+                                step="1"
+                                min="0"
+                                className="h-7 text-xs text-right ml-auto"
+                              />
+                            </TableCell>
+                            <TableCell className="py-1 text-right">
+                              <Input
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "unitPrice", e.target.value)}
+                                step="0.01"
+                                min="0"
+                                className="h-7 text-xs text-right ml-auto"
+                              />
+                            </TableCell>
+                            <TableCell className="py-1 text-right font-semibold">
+                              <Input
+                                type="number"
+                                value={item.totalPrice}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "totalPrice", e.target.value)}
+                                step="0.01"
+                                min="0"
+                                className="h-7 text-xs font-bold text-right ml-auto text-primary"
+                              />
+                            </TableCell>
+                            <TableCell className="py-1 text-center">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                onClick={() => handleRemoveItemAddendumRow(item.id)}
+                                title="Remover item"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div className="p-2.5 bg-muted/40 rounded border text-xs space-y-1">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Valor Atual do Contrato:</span>
-                    <span className="font-mono">{formatCurrency(contract.value)}</span>
+                    <span className="text-muted-foreground">Valor Total Atual do Contrato:</span>
+                    <span className="font-mono">{formatCurrency(contract?.value || 0)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Valor do Acréscimo (Aditivo):</span>
-                    <span className="font-mono text-green-700 font-semibold">
-                      +{formatCurrency(
-                        addendumValueMode === "total"
-                          ? Math.max(0, (parseFloat(addendumNewValue) || 0) - contract.value)
-                          : (parseFloat(addendumNewValue) || 0)
-                      )}
+                    <span className="text-muted-foreground">Soma dos Novos Totais dos Itens:</span>
+                    <span className="font-mono text-primary font-bold">
+                      {formatCurrency(itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0))}
                     </span>
                   </div>
-                  <div className="flex justify-between border-t pt-1.5 font-bold">
-                    <span>Novo Valor Total do Contrato:</span>
-                    <span className="font-mono text-primary text-sm">
-                      {formatCurrency(
-                        addendumValueMode === "total"
-                          ? (parseFloat(addendumNewValue) || 0)
-                          : contract.value + (parseFloat(addendumNewValue) || 0)
-                      )}
+                  <div className="flex justify-between border-t pt-1 font-semibold">
+                    <span>Variação Total (Aditivo):</span>
+                    <span className={`font-mono ${itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0) >= 0 ? "text-green-700" : "text-red-600"}`}>
+                      {itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0) >= 0 ? "+" : ""}
+                      {formatCurrency(itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0))}
                     </span>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {/* Inputs para outros casos ou modo 'addition' */}
+            {((addendumType !== "produto" && addendumType !== "quantidade") || addendumValueMode === "addition") && (
+              <div>
+                <Label htmlFor="newValue" className="text-sm font-medium">
+                  {addendumType === "vencimento" 
+                    ? "Nova Data de Vencimento *" 
+                    : addendumType === "valor"
+                    ? addendumValueMode === "total" ? "Novo Valor Total do Contrato (R$) *" : "Valor a Adicionar/Acréscimo (R$) *"
+                    : "Valor a Adicionar no Item/Contrato (R$) *"}
+                </Label>
+                {addendumType === "vencimento" ? (
+                  <Input
+                    id="newValue"
+                    type="date"
+                    value={addendumNewValue}
+                    onChange={(e) => setAddendumNewValue(e.target.value)}
+                    className="mt-2"
+                  />
+                ) : (
+                  <Input
+                    id="newValue"
+                    type="number"
+                    placeholder={addendumValueMode === "total" ? "Ex: 563000,00" : "Ex: 112000,00"}
+                    value={addendumNewValue}
+                    onChange={(e) => setAddendumNewValue(e.target.value)}
+                    step="0.01"
+                    min="0"
+                    className="mt-2 font-mono font-semibold"
+                  />
+                )}
+                {addendumType === "vencimento" && contract?.expirationDate && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Vencimento atual: {new Date(contract.expirationDate).toLocaleDateString("pt-BR")}
+                  </p>
+                )}
+                {(addendumType === "valor" || addendumValueMode === "addition") && contract?.value !== undefined && addendumNewValue && (
+                  <div className="mt-3 p-3 bg-muted/40 border rounded-md text-xs space-y-1.5">
+                    <p className="font-semibold text-gray-800">Resumo da Alteração de Valor:</p>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Valor Atual do Contrato:</span>
+                      <span className="font-mono">{formatCurrency(contract.value)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Valor do Acréscimo (Aditivo):</span>
+                      <span className="font-mono text-green-700 font-semibold">
+                        +{formatCurrency(
+                          addendumValueMode === "total"
+                            ? Math.max(0, (parseFloat(addendumNewValue) || 0) - contract.value)
+                            : (parseFloat(addendumNewValue) || 0)
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1.5 font-bold">
+                      <span>Novo Valor Total do Contrato:</span>
+                      <span className="font-mono text-primary text-sm">
+                        {formatCurrency(
+                          addendumValueMode === "total"
+                            ? (parseFloat(addendumNewValue) || 0)
+                            : contract.value + (parseFloat(addendumNewValue) || 0)
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-3 pt-3 border-t">
               <div className="flex items-start space-x-2">

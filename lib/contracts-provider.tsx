@@ -888,17 +888,25 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           // O valor informado representa o Novo Valor Total do Contrato
           updatedValue = parsedVal
         }
-      } else if (addendum.type === "produto" && Array.isArray(addendum.newValue)) {
-        updatedItems = [...updatedItems, ...addendum.newValue]
+      } else if ((addendum.type === "produto" || addendum.type === "quantidade") && addendum.newValue !== undefined) {
+        const val = typeof addendum.newValue === "string" ? parseFloat(addendum.newValue) : Number(addendum.newValue)
+        const parsedVal = isNaN(val) ? 0 : val
+        if (addendum.valueMode === "addition") {
+          updatedValue = Number(contract.value || 0) + parsedVal
+        } else {
+          updatedValue = parsedVal
+        }
       }
 
-      // Tratar Reequilíbrio de Preço se informado no aditivo
+      // Tratar Reequilíbrio de Preço ou Atualização de Itens do Aditivo
       if (addendum.updatedItems && Array.isArray(addendum.updatedItems)) {
         updatedItems = addendum.updatedItems.map((item) => ({
           ...item,
-          usedQuantity: shouldResetBalance ? 0 : item.usedQuantity,
+          usedQuantity: shouldResetBalance ? 0 : (item.usedQuantity || 0),
         }))
-        updatedValue = updatedItems.reduce((sum, item) => sum + Number(item.totalPrice || 0), 0)
+        if (addendum.valueMode !== "addition") {
+          updatedValue = updatedItems.reduce((sum, item) => sum + Number(item.totalPrice || 0), 0)
+        }
       } else if (addendum.rebalancePercent && addendum.rebalancePercent > 0) {
         const factor = 1 + addendum.rebalancePercent / 100
         updatedItems = updatedItems.map((item) => {
