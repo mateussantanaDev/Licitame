@@ -995,14 +995,21 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
   ): Promise<boolean> => {
     try {
       const contract = contracts.find((c) => c.id === contractId)
-      if (!contract) return false
+      if (!contract) {
+        console.error("Contrato não encontrado:", contractId)
+        return false
+      }
 
       const oldAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
-      if (!oldAddendum) return false
+      if (!oldAddendum) {
+        console.error("Aditivo não encontrado:", addendumId)
+        return false
+      }
 
+      const cleanedUpdatedData = JSON.parse(JSON.stringify(updatedData))
       const newAddendum: ContractAddendum = {
         ...oldAddendum,
-        ...updatedData,
+        ...cleanedUpdatedData,
       }
 
       const updatedAddendums = (contract.addendums || []).map((a) => (a.id === addendumId ? newAddendum : a))
@@ -1011,16 +1018,16 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       let updatedValue = contract.value
 
       if (newAddendum.type === "vencimento" && newAddendum.newValue) {
-        newExpirationDate = newAddendum.newValue
+        newExpirationDate = String(newAddendum.newValue)
       } else if (newAddendum.type === "valor" && newAddendum.newValue !== undefined) {
         const val = typeof newAddendum.newValue === "string" ? parseFloat(newAddendum.newValue) : Number(newAddendum.newValue)
         const parsedVal = isNaN(val) ? 0 : val
         if (newAddendum.valueMode === "addition") {
           const prevAdded = typeof oldAddendum.newValue === "string" ? parseFloat(oldAddendum.newValue) : Number(oldAddendum.newValue || 0)
           const baseVal = Number(contract.value) - (isNaN(prevAdded) ? 0 : prevAdded)
-          updatedValue = baseVal + parsedVal
+          updatedValue = Math.max(0, baseVal + parsedVal)
         } else {
-          updatedValue = parsedVal
+          updatedValue = Math.max(0, parsedVal)
         }
       }
 
@@ -1029,17 +1036,17 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         updatedStatus = "ativo"
       }
 
-      const newLog: AddendumLog = {
+      const newLog: AddendumLog = JSON.parse(JSON.stringify({
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         contractId,
         addendumId,
-        addendumNumber: newAddendum.number,
+        addendumNumber: newAddendum.number || "Aditivo",
         action: "edit",
-        description: `Aditivo ${newAddendum.number} alterado`,
+        description: `Aditivo ${newAddendum.number || ""} alterado`,
         timestamp: new Date().toISOString(),
         oldData: oldAddendum,
-        newData: updatedData,
-      }
+        newData: cleanedUpdatedData,
+      }))
 
       const updatedAddendumLogs = [newLog, ...(contract.addendumLogs || [])]
       const updatedUsedPercentage = updatedValue > 0 ? Math.round((contract.usedValue / updatedValue) * 100) : 0
@@ -1055,7 +1062,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       }
 
       if (isFirebaseConfigured()) {
-        const dataToUpdate = {
+        const dataToUpdate = JSON.parse(JSON.stringify({
           addendums: updatedAddendums,
           aditivos: updatedAddendums,
           addendumLogs: updatedAddendumLogs,
@@ -1066,9 +1073,12 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           usedPercentage: updatedUsedPercentage,
           status: updatedStatus,
           situacao: updatedStatus,
-        }
+        }))
         const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
-        if (!success) return false
+        if (!success) {
+          console.error("Falha no updateDocument do Firebase ao editar aditivo")
+          return false
+        }
       }
 
       setContracts((prev) => prev.map((c) => (c.id === contractId ? updatedContract : c)))
@@ -1104,15 +1114,21 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
   ): Promise<boolean> => {
     try {
       const contract = contracts.find((c) => c.id === contractId)
-      if (!contract) return false
+      if (!contract) {
+        console.error("Contrato não encontrado para exclusão do aditivo:", contractId)
+        return false
+      }
 
       const deletedAddendum = (contract.addendums || []).find((a) => a.id === addendumId)
-      if (!deletedAddendum) return false
+      if (!deletedAddendum) {
+        console.error("Aditivo não encontrado para exclusão:", addendumId)
+        return false
+      }
 
       const updatedAddendums = (contract.addendums || []).filter((a) => a.id !== addendumId)
 
-      let newExpirationDate = contract.initialExpirationDate || contract.expirationDate
-      let updatedValue = contract.initialValue !== undefined ? contract.initialValue : contract.value
+      let newExpirationDate = contract.expirationDate
+      let updatedValue = contract.value
 
       if (deletedAddendum.type === "valor" && deletedAddendum.newValue !== undefined) {
         const val = typeof deletedAddendum.newValue === "string" ? parseFloat(deletedAddendum.newValue) : Number(deletedAddendum.newValue)
@@ -1131,16 +1147,16 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         updatedStatus = "ativo"
       }
 
-      const newLog: AddendumLog = {
+      const newLog: AddendumLog = JSON.parse(JSON.stringify({
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         contractId,
         addendumId,
-        addendumNumber: deletedAddendum.number,
+        addendumNumber: deletedAddendum.number || "Aditivo",
         action: "delete",
-        description: `Aditivo ${deletedAddendum.number} excluído`,
+        description: `Aditivo ${deletedAddendum.number || ""} excluído`,
         timestamp: new Date().toISOString(),
         oldData: deletedAddendum,
-      }
+      }))
 
       const updatedAddendumLogs = [newLog, ...(contract.addendumLogs || [])]
       const updatedUsedPercentage = updatedValue > 0 ? Math.round((contract.usedValue / updatedValue) * 100) : 0
@@ -1156,7 +1172,7 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
       }
 
       if (isFirebaseConfigured()) {
-        const dataToUpdate = {
+        const dataToUpdate = JSON.parse(JSON.stringify({
           addendums: updatedAddendums,
           aditivos: updatedAddendums,
           addendumLogs: updatedAddendumLogs,
@@ -1167,9 +1183,12 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           usedPercentage: updatedUsedPercentage,
           status: updatedStatus,
           situacao: updatedStatus,
-        }
+        }))
         const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
-        if (!success) return false
+        if (!success) {
+          console.error("Falha ao salvar no Firebase ao excluir aditivo")
+          return false
+        }
       }
 
       setContracts((prev) => prev.map((c) => (c.id === contractId ? updatedContract : c)))
