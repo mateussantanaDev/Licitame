@@ -474,6 +474,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         })
         setEditAddendumTarget(null)
       } else {
+        console.error("[handleSaveEditAddendum] editAddendum retornou false")
         toast({
           title: "Erro",
           description: "Não foi possível alterar o aditivo.",
@@ -481,6 +482,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         })
       }
     } catch (error) {
+      console.error("[handleSaveEditAddendum] Erro ao editar aditivo:", error)
       toast({
         title: "Erro",
         description: "Ocorreu um erro ao alterar o aditivo.",
@@ -492,11 +494,16 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   }
 
   const handleConfirmDeleteAddendum = async () => {
-    if (!contract || !deleteAddendumTarget) return
+    if (!contract || !deleteAddendumTarget) {
+      console.warn("[handleConfirmDeleteAddendum] contract ou deleteAddendumTarget está nulo:", { contract, deleteAddendumTarget })
+      return
+    }
     setIsDeletingAddendum(true)
     try {
       const targetId = deleteAddendumTarget.id || deleteAddendumTarget.number
+      console.log(`[handleConfirmDeleteAddendum] Executando exclusão. contract.id="${contract.id}", targetId="${targetId}"`, deleteAddendumTarget)
       const success = await deleteAddendum(contract.id, targetId)
+      console.log(`[handleConfirmDeleteAddendum] Resultado do deleteAddendum: ${success}`)
       if (success) {
         toast({
           title: "Aditivo excluído",
@@ -504,6 +511,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         })
         setDeleteAddendumTarget(null)
       } else {
+        console.error("[handleConfirmDeleteAddendum] deleteAddendum retornou false")
         toast({
           title: "Erro",
           description: "Não foi possível excluir o aditivo.",
@@ -511,6 +519,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         })
       }
     } catch (error) {
+      console.error("[handleConfirmDeleteAddendum] Exceção capturada:", error)
       toast({
         title: "Erro",
         description: "Ocorreu um erro ao excluir o aditivo.",

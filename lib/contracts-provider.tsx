@@ -1173,24 +1173,27 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
     addendumId: string
   ): Promise<boolean> => {
     try {
+      console.log(`[deleteAddendum] Exclusão solicitada. contractId="${contractId}", addendumId="${addendumId}"`)
       const contract = contracts.find((c) => c.id === contractId)
       if (!contract) {
-        console.error("Contrato não encontrado para exclusão do aditivo:", contractId)
+        console.error(`[deleteAddendum] Contrato "${contractId}" não encontrado. Contratos:`, contracts.map(c => c.id))
         return false
       }
 
       const addendumsList = contract.addendums || []
+      console.log(`[deleteAddendum] Aditivos no contrato (${addendumsList.length}):`, addendumsList)
       // Buscar por id, numero ou índice do array (0, 1, 2...)
       const targetIndex = addendumsList.findIndex(
         (a, idx) => a.id === addendumId || a.number === addendumId || String(idx) === String(addendumId)
       )
 
       if (targetIndex === -1) {
-        console.error("Aditivo não encontrado para exclusão:", addendumId)
+        console.error(`[deleteAddendum] Aditivo "${addendumId}" não encontrado na lista:`, addendumsList)
         return false
       }
 
       const deletedAddendum = addendumsList[targetIndex]
+      console.log(`[deleteAddendum] Aditivo localizado no índice ${targetIndex}:`, deletedAddendum)
       const updatedAddendums = addendumsList.filter((_, idx) => idx !== targetIndex)
 
       let newExpirationDate = contract.expirationDate
@@ -1251,9 +1254,10 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
           status: updatedStatus,
           situacao: updatedStatus,
         }))
+        console.log(`[deleteAddendum] Enviando updateDocument para Firebase... doc=${contractId}`, dataToUpdate)
         const success = await updateDocument(COLLECTIONS.CONTRACTS, contractId, dataToUpdate)
         if (!success) {
-          console.error("Falha ao salvar no Firebase ao excluir aditivo")
+          console.error(`[deleteAddendum] updateDocument retornou FALSE para contractId=${contractId}`)
           return false
         }
       }
@@ -1270,8 +1274,10 @@ export function ContractsProvider({ children }: { children: ReactNode }) {
         { contractId, addendumId }
       )
 
+      console.log(`[deleteAddendum] Exclusão concluída com sucesso para aditivo="${addendumId}"`)
       return true
     } catch (error) {
+      console.error("[deleteAddendum] Erro capturado no try/catch:", error)
       ValidationLogger.log(
         "error",
         "contracts",
