@@ -1368,7 +1368,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-bold flex items-center gap-1.5">
                     <FileText className="h-4 w-4 text-primary" />
-                    Tabela de Itens e Ajustes de Quantidade
+                    Tabela de Itens e Aditivos por Quantidade
                   </Label>
                   <Button
                     type="button"
@@ -1383,37 +1383,43 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 </div>
 
                 <p className="text-[11px] text-muted-foreground">
-                  Altere a <strong>Soma Qtd</strong> e o <strong>Valor em Reais (R$)</strong>. O <strong>Total Qtd Nova</strong> e o <strong>Total Reais (R$)</strong> são calculados automaticamente.
+                  Altere a <strong>Soma Qtd</strong> e o <strong>Valor em Reais (R$)</strong>. O <strong>+ Valor Adicionado</strong>, a <strong>Total Qtd Nova</strong> e o <strong>Total Reais (R$)</strong> do item são calculados automaticamente.
                 </p>
 
                 <div className="max-h-72 overflow-y-auto rounded border bg-background overflow-x-auto">
-                  <Table className="text-xs w-full min-w-[750px]">
+                  <Table className="text-xs w-full min-w-[880px]">
                     <TableHeader>
                       <TableRow className="h-8 bg-muted/50">
-                        <TableHead className="py-1 min-w-[150px]">Item</TableHead>
-                        <TableHead className="py-1 text-center w-24">Qtd Original</TableHead>
-                        <TableHead className="py-1 text-right w-28 bg-emerald-500/10 font-bold text-emerald-800 dark:text-emerald-400">Soma Qtd</TableHead>
-                        <TableHead className="py-1 text-right w-32 font-semibold">Valor em Reais (R$)</TableHead>
-                        <TableHead className="py-1 text-center w-28 font-bold text-primary">Total Qtd Nova</TableHead>
-                        <TableHead className="py-1 text-right w-36 font-bold text-primary">Total Reais (R$)</TableHead>
+                        <TableHead className="py-1 min-w-[140px]">Item</TableHead>
+                        <TableHead className="py-1 text-center w-20">Qtd Orig.</TableHead>
+                        <TableHead className="py-1 text-right w-24 bg-emerald-500/10 font-bold text-emerald-800 dark:text-emerald-400">Soma Qtd</TableHead>
+                        <TableHead className="py-1 text-right w-28 font-semibold">Valor em Reais (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-32 bg-emerald-500/10 font-bold text-emerald-700 dark:text-emerald-400">+ Valor Adicionado</TableHead>
+                        <TableHead className="py-1 text-center w-24 font-bold text-primary">Total Qtd Nova</TableHead>
+                        <TableHead className="py-1 text-right w-32 font-bold text-primary">Total Reais (R$)</TableHead>
                         <TableHead className="py-1 text-center w-10"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {itemAddendumList.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-4 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-4 text-muted-foreground">
                             Nenhum item cadastrado. Clique em "+ Adicionar Novo Item".
                           </TableCell>
                         </TableRow>
                       ) : (
                         itemAddendumList.map((item) => {
-                          const totalQtdNova = Number(item.originalQuantity || 0) + Number(item.addQuantity || 0)
-                          const totalReais = Number((totalQtdNova * Number(item.unitPrice || 0)).toFixed(2))
+                          const addQty = Number(item.addQuantity || 0)
+                          const unitPrice = Number(item.unitPrice || 0)
+                          const origQty = Number(item.originalQuantity || 0)
+
+                          const valorAdicionado = Number((addQty * unitPrice).toFixed(2))
+                          const totalQtdNova = origQty + addQty
+                          const totalReais = Number((totalQtdNova * unitPrice).toFixed(2))
 
                           return (
                             <TableRow key={item.id} className="h-9">
-                              <TableCell className="py-1 font-medium min-w-[150px]">
+                              <TableCell className="py-1 font-medium min-w-[140px]">
                                 <Input
                                   type="text"
                                   value={item.name}
@@ -1422,7 +1428,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 />
                               </TableCell>
                               <TableCell className="py-1 text-center font-mono text-muted-foreground text-xs">
-                                {item.originalQuantity || 0}
+                                {origQty}
                               </TableCell>
                               <TableCell className="py-1 text-right bg-emerald-500/5">
                                 <Input
@@ -1430,7 +1436,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                   value={item.addQuantity}
                                   onChange={(e) => handleItemAddendumFieldChange(item.id, "addQuantity", e.target.value)}
                                   step="1"
-                                  className="h-8 text-xs font-bold text-right w-24 ml-auto font-mono text-emerald-700 dark:text-emerald-400 bg-background"
+                                  className="h-8 text-xs font-bold text-right w-20 ml-auto font-mono text-emerald-700 dark:text-emerald-400 bg-background"
                                 />
                               </TableCell>
                               <TableCell className="py-1 text-right font-semibold">
@@ -1440,8 +1446,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                   onChange={(e) => handleItemAddendumFieldChange(item.id, "unitPrice", e.target.value)}
                                   step="0.01"
                                   min="0"
-                                  className="h-8 text-xs text-right w-28 ml-auto font-mono"
+                                  className="h-8 text-xs text-right w-24 ml-auto font-mono"
                                 />
+                              </TableCell>
+                              <TableCell className="py-1 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400 text-xs bg-emerald-500/5">
+                                +{formatCurrency(valorAdicionado)}
                               </TableCell>
                               <TableCell className="py-1 text-center font-mono font-bold text-primary text-xs">
                                 {totalQtdNova}
@@ -1469,26 +1478,31 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   </Table>
                 </div>
 
-                <div className="p-3 bg-muted/40 rounded border text-xs space-y-1.5">
+                <div className="p-3 bg-muted/40 rounded border text-xs space-y-2">
                   <div className="flex justify-between text-muted-foreground">
                     <span>Valor Total Original do Contrato:</span>
-                    <span className="font-mono">{formatCurrency(contract?.value || 0)}</span>
+                    <span className="font-mono text-xs font-semibold">{formatCurrency(contract?.value || 0)}</span>
                   </div>
-                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-semibold">
-                    <span>Acréscimo Total de Quantidades (+ Soma Qtd):</span>
-                    <span className="font-mono">
-                      +{itemAddendumList.reduce((sum, i) => sum + (Number(i.addQuantity) || 0), 0)} itens
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t pt-1 font-bold text-sm">
-                    <span>Novo Valor Total do Contrato:</span>
-                    <span className="font-mono text-primary">
-                      {formatCurrency(
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-bold">
+                    <span>Valor Total Adicionado dos Itens (Aditivo de Produtos):</span>
+                    <span className="font-mono text-sm">
+                      +{formatCurrency(
                         itemAddendumList.reduce(
-                          (sum, i) =>
-                            sum + (Number(i.originalQuantity || 0) + Number(i.addQuantity || 0)) * Number(i.unitPrice || 0),
+                          (sum, i) => sum + (Number(i.addQuantity) || 0) * Number(i.unitPrice || 0),
                           0
                         )
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t pt-1.5 font-bold text-sm text-primary">
+                    <span>Novo Valor Total do Contrato:</span>
+                    <span className="font-mono text-base">
+                      {formatCurrency(
+                        (contract?.value || 0) +
+                          itemAddendumList.reduce(
+                            (sum, i) => sum + (Number(i.addQuantity) || 0) * Number(i.unitPrice || 0),
+                            0
+                          )
                       )}
                     </span>
                   </div>
