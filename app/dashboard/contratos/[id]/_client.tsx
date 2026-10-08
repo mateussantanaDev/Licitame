@@ -1721,7 +1721,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <Button
               onClick={handleAddAddendum}
-              disabled={isSubmittingAddendum || !addendumNewValue || !addendumDescription.trim()}
+              disabled={
+                isSubmittingAddendum ||
+                !addendumDescription.trim() ||
+                ((addendumType !== "produto" && addendumType !== "quantidade") && !addendumNewValue)
+              }
               className="bg-primary text-primary-foreground"
             >
               {isSubmittingAddendum ? "Criando..." : "Criar Aditivo"}
