@@ -1396,8 +1396,8 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
               </div>
             )}
 
-            {/* Gerenciamento de Itens quando modo 'total' para Produto / Quantidade */}
-            {(addendumType === "produto" || addendumType === "quantidade") && addendumValueMode === "total" && (
+            {/* Gerenciamento de Itens quando Aditivo de Produto / Quantidade */}
+            {(addendumType === "produto" || addendumType === "quantidade") && (
               <div className="space-y-3 p-3 bg-muted/20 rounded-lg border">
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-bold flex items-center gap-1.5">
@@ -1417,15 +1417,16 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 </div>
 
                 <p className="text-[11px] text-muted-foreground">
-                  Altere o valor a somar (+ Somar), o novo valor total ou o novo unitário. Os valores são sincronizados automaticamente.
+                  Altere a quantidade, o valor a somar (+ Somar), o novo valor total ou o novo unitário. Todos os campos são sincronizados em tempo real.
                 </p>
 
                 <div className="max-h-72 overflow-y-auto rounded border bg-background overflow-x-auto">
-                  <Table className="text-xs w-full min-w-[820px]">
+                  <Table className="text-xs w-full min-w-[900px]">
                     <TableHeader>
                       <TableRow className="h-8 bg-muted/50">
-                        <TableHead className="py-1 min-w-[140px]">Nome do Item</TableHead>
-                        <TableHead className="py-1 text-right w-16">Qtd</TableHead>
+                        <TableHead className="py-1 min-w-[130px]">Nome do Item</TableHead>
+                        <TableHead className="py-1 text-right w-16">Qtd Orig.</TableHead>
+                        <TableHead className="py-1 text-right w-20">Nova Qtd</TableHead>
                         <TableHead className="py-1 text-right w-24">Unit. Orig. (R$)</TableHead>
                         <TableHead className="py-1 text-right w-24">Total Orig. (R$)</TableHead>
                         <TableHead className="py-1 text-right w-28 bg-emerald-500/10 font-bold text-emerald-800 dark:text-emerald-400">+ Somar (R$)</TableHead>
@@ -1437,20 +1438,23 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                     <TableBody>
                       {itemAddendumList.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={8} className="text-center py-4 text-muted-foreground">
+                          <TableCell colSpan={9} className="text-center py-4 text-muted-foreground">
                             Nenhum item cadastrado. Clique em "+ Adicionar Novo Item".
                           </TableCell>
                         </TableRow>
                       ) : (
                         itemAddendumList.map((item) => (
                           <TableRow key={item.id} className="h-9">
-                            <TableCell className="py-1 font-medium min-w-[140px]">
+                            <TableCell className="py-1 font-medium min-w-[130px]">
                               <Input
                                 type="text"
                                 value={item.name}
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "name", e.target.value)}
                                 className="h-8 text-xs bg-background"
                               />
+                            </TableCell>
+                            <TableCell className="py-1 text-right font-mono text-muted-foreground text-[11px]">
+                              {item.originalQuantity || 0}
                             </TableCell>
                             <TableCell className="py-1 text-right">
                               <Input
@@ -1516,37 +1520,36 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   </Table>
                 </div>
 
-                <div className="p-2.5 bg-muted/40 rounded border text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Valor Total Atual do Contrato:</span>
+                <div className="p-3 bg-muted/40 rounded border text-xs space-y-1.5">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Valor Total Original do Contrato:</span>
                     <span className="font-mono">{formatCurrency(contract?.value || 0)}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Soma dos Novos Totais dos Itens:</span>
-                    <span className="font-mono text-primary font-bold">
-                      {formatCurrency(itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0))}
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-semibold">
+                    <span>Soma dos Acréscimos em Reais (+ Somar):</span>
+                    <span className="font-mono">
+                      +{formatCurrency(itemAddendumList.reduce((sum, i) => sum + (i.additionAmount || 0), 0))}
                     </span>
                   </div>
-                  <div className="flex justify-between border-t pt-1 font-semibold">
-                    <span>Variação Total (Aditivo):</span>
-                    <span className={`font-mono ${itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0) >= 0 ? "text-green-700" : "text-red-600"}`}>
-                      {itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0) >= 0 ? "+" : ""}
-                      {formatCurrency(itemAddendumList.reduce((sum, i) => sum + i.totalPrice, 0) - (contract?.value || 0))}
+                  <div className="flex justify-between border-t pt-1 font-bold text-sm">
+                    <span>Novo Valor Total do Contrato:</span>
+                    <span className="font-mono text-primary">
+                      {formatCurrency(itemAddendumList.reduce((sum, i) => sum + (i.totalPrice || 0), 0))}
                     </span>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Inputs para outros casos ou modo 'addition' */}
-            {((addendumType !== "produto" && addendumType !== "quantidade") || addendumValueMode === "addition") && (
+            {/* Inputs para tipo Vencimento, Valor Global ou Outros */}
+            {addendumType !== "produto" && addendumType !== "quantidade" && (
               <div>
                 <Label htmlFor="newValue" className="text-sm font-medium">
                   {addendumType === "vencimento" 
                     ? "Nova Data de Vencimento *" 
                     : addendumType === "valor"
                     ? addendumValueMode === "total" ? "Novo Valor Total do Contrato (R$) *" : "Valor a Adicionar/Acréscimo (R$) *"
-                    : "Valor a Adicionar no Item/Contrato (R$) *"}
+                    : "Valor do Aditivo (R$) *"}
                 </Label>
                 {addendumType === "vencimento" ? (
                   <Input
