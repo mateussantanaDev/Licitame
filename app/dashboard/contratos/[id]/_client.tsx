@@ -87,6 +87,10 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
       id: string
       name: string
       description: string
+      originalQuantity: number
+      originalUnitPrice: number
+      originalTotalPrice: number
+      additionAmount: number
       quantity: number
       unitPrice: number
       totalPrice: number
@@ -115,9 +119,13 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
           id: item.id,
           name: item.name,
           description: item.description || "",
+          originalQuantity: item.quantity,
+          originalUnitPrice: item.unitPrice,
+          originalTotalPrice: Number((item.quantity * item.unitPrice).toFixed(2)),
+          additionAmount: 0,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
+          totalPrice: Number((item.quantity * item.unitPrice).toFixed(2)),
           usedQuantity: item.usedQuantity || 0,
         }))
       )
@@ -126,25 +134,42 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
 
   const handleItemAddendumFieldChange = (
     id: string,
-    field: "name" | "description" | "quantity" | "unitPrice" | "totalPrice",
+    field: "name" | "description" | "quantity" | "unitPrice" | "totalPrice" | "additionAmount",
     value: any
   ) => {
     setItemAddendumList((prev) =>
       prev.map((item) => {
         if (item.id === id) {
           const updated = { ...item, [field]: value }
-          if (field === "quantity" || field === "unitPrice") {
-            const qty = field === "quantity" ? parseFloat(value) || 0 : item.quantity
-            const price = field === "unitPrice" ? parseFloat(value) || 0 : item.unitPrice
-            updated.quantity = qty
-            updated.unitPrice = price
-            updated.totalPrice = Number((qty * price).toFixed(2))
+          const origTotal = item.originalTotalPrice || 0
+
+          if (field === "additionAmount") {
+            const addition = parseFloat(value) || 0
+            updated.additionAmount = addition
+            const newTotal = Number((origTotal + addition).toFixed(2))
+            updated.totalPrice = newTotal
+            if (updated.quantity > 0) {
+              updated.unitPrice = Number((newTotal / updated.quantity).toFixed(2))
+            }
           } else if (field === "totalPrice") {
             const tot = parseFloat(value) || 0
             updated.totalPrice = tot
+            updated.additionAmount = Number((tot - origTotal).toFixed(2))
             if (item.quantity > 0) {
               updated.unitPrice = Number((tot / item.quantity).toFixed(2))
             }
+          } else if (field === "unitPrice") {
+            const price = parseFloat(value) || 0
+            updated.unitPrice = price
+            const newTotal = Number((item.quantity * price).toFixed(2))
+            updated.totalPrice = newTotal
+            updated.additionAmount = Number((newTotal - origTotal).toFixed(2))
+          } else if (field === "quantity") {
+            const qty = parseFloat(value) || 0
+            updated.quantity = qty
+            const newTotal = Number((qty * item.unitPrice).toFixed(2))
+            updated.totalPrice = newTotal
+            updated.additionAmount = Number((newTotal - origTotal).toFixed(2))
           }
           return updated
         }
@@ -158,6 +183,10 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
       id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       name: `Novo Item ${(itemAddendumList.length + 1)}`,
       description: "",
+      originalQuantity: 0,
+      originalUnitPrice: 0,
+      originalTotalPrice: 0,
+      additionAmount: 0,
       quantity: 1,
       unitPrice: 0,
       totalPrice: 0,
@@ -1292,7 +1321,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
 
       {/* Diálogo para adicionar aditivo de contrato */}
       <AlertDialog open={showAddAddendumDialog} onOpenChange={setShowAddAddendumDialog}>
-        <AlertDialogContent className={(hasRebalance || ((addendumType === "produto" || addendumType === "quantidade") && addendumValueMode === "total")) ? "sm:max-w-4xl w-[95vw]" : "sm:max-w-xl w-[95vw]"}>
+        <AlertDialogContent className={(hasRebalance || ((addendumType === "produto" || addendumType === "quantidade") && addendumValueMode === "total")) ? "sm:max-w-5xl w-[95vw]" : "sm:max-w-xl w-[95vw]"}>
           <AlertDialogHeader>
             <AlertDialogTitle>Novo Aditivo do Contrato</AlertDialogTitle>
             <AlertDialogDescription>
@@ -1373,7 +1402,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 <div className="flex items-center justify-between">
                   <Label className="text-xs font-bold flex items-center gap-1.5">
                     <FileText className="h-4 w-4 text-primary" />
-                    Gerenciar Novo Valor Total de Cada Item
+                    Gerenciamento de Itens e Ajustes de Valores
                   </Label>
                   <Button
                     type="button"
@@ -1388,31 +1417,34 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                 </div>
 
                 <p className="text-[11px] text-muted-foreground">
-                  Altere a quantidade, valor unitário ou total individual de cada item. Novos totais serão calculados automaticamente.
+                  Altere o valor a somar (+ Somar), o novo valor total ou o novo unitário. Os valores são sincronizados automaticamente.
                 </p>
 
                 <div className="max-h-72 overflow-y-auto rounded border bg-background overflow-x-auto">
-                  <Table className="text-xs w-full min-w-[600px]">
+                  <Table className="text-xs w-full min-w-[820px]">
                     <TableHeader>
                       <TableRow className="h-8 bg-muted/50">
-                        <TableHead className="py-1 min-w-[160px]">Nome do Item</TableHead>
-                        <TableHead className="py-1 text-right w-24">Qtd</TableHead>
-                        <TableHead className="py-1 text-right w-32">Unitário (R$)</TableHead>
-                        <TableHead className="py-1 text-right w-36">Total (R$)</TableHead>
-                        <TableHead className="py-1 text-center w-12"></TableHead>
+                        <TableHead className="py-1 min-w-[140px]">Nome do Item</TableHead>
+                        <TableHead className="py-1 text-right w-16">Qtd</TableHead>
+                        <TableHead className="py-1 text-right w-24">Unit. Orig. (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-24">Total Orig. (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-28 bg-emerald-500/10 font-bold text-emerald-800 dark:text-emerald-400">+ Somar (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-32 bg-primary/10 font-bold text-primary">Novo Total (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-28 font-semibold">Novo Unit. (R$)</TableHead>
+                        <TableHead className="py-1 text-center w-10"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {itemAddendumList.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                          <TableCell colSpan={8} className="text-center py-4 text-muted-foreground">
                             Nenhum item cadastrado. Clique em "+ Adicionar Novo Item".
                           </TableCell>
                         </TableRow>
                       ) : (
                         itemAddendumList.map((item) => (
                           <TableRow key={item.id} className="h-9">
-                            <TableCell className="py-1 font-medium">
+                            <TableCell className="py-1 font-medium min-w-[140px]">
                               <Input
                                 type="text"
                                 value={item.name}
@@ -1427,27 +1459,42 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "quantity", e.target.value)}
                                 step="1"
                                 min="0"
-                                className="h-8 text-xs text-right w-20 ml-auto font-mono"
+                                className="h-8 text-xs text-right w-16 ml-auto font-mono"
                               />
                             </TableCell>
-                            <TableCell className="py-1 text-right">
+                            <TableCell className="py-1 text-right font-mono text-muted-foreground text-[11px]">
+                              {formatCurrency(item.originalUnitPrice || 0)}
+                            </TableCell>
+                            <TableCell className="py-1 text-right font-mono text-muted-foreground text-[11px]">
+                              {formatCurrency(item.originalTotalPrice || 0)}
+                            </TableCell>
+                            <TableCell className="py-1 text-right bg-emerald-500/5">
                               <Input
                                 type="number"
-                                value={item.unitPrice}
-                                onChange={(e) => handleItemAddendumFieldChange(item.id, "unitPrice", e.target.value)}
+                                value={item.additionAmount}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "additionAmount", e.target.value)}
                                 step="0.01"
-                                min="0"
-                                className="h-8 text-xs text-right w-28 ml-auto font-mono"
+                                className="h-8 text-xs font-bold text-right w-24 ml-auto font-mono text-emerald-700 dark:text-emerald-400 bg-background"
                               />
                             </TableCell>
-                            <TableCell className="py-1 text-right font-semibold">
+                            <TableCell className="py-1 text-right bg-primary/5">
                               <Input
                                 type="number"
                                 value={item.totalPrice}
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "totalPrice", e.target.value)}
                                 step="0.01"
                                 min="0"
-                                className="h-8 text-xs font-bold text-right w-32 ml-auto font-mono text-primary"
+                                className="h-8 text-xs font-bold text-right w-28 ml-auto font-mono text-primary bg-background"
+                              />
+                            </TableCell>
+                            <TableCell className="py-1 text-right font-semibold">
+                              <Input
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(e) => handleItemAddendumFieldChange(item.id, "unitPrice", e.target.value)}
+                                step="0.01"
+                                min="0"
+                                className="h-8 text-xs text-right w-24 ml-auto font-mono"
                               />
                             </TableCell>
                             <TableCell className="py-1 text-center">
