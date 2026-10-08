@@ -1292,7 +1292,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
 
       {/* Diálogo para adicionar aditivo de contrato */}
       <AlertDialog open={showAddAddendumDialog} onOpenChange={setShowAddAddendumDialog}>
-        <AlertDialogContent className={hasRebalance ? "max-w-3xl" : "max-w-md"}>
+        <AlertDialogContent className={(hasRebalance || ((addendumType === "produto" || addendumType === "quantidade") && addendumValueMode === "total")) ? "sm:max-w-4xl w-[95vw]" : "sm:max-w-xl w-[95vw]"}>
           <AlertDialogHeader>
             <AlertDialogTitle>Novo Aditivo do Contrato</AlertDialogTitle>
             <AlertDialogDescription>
@@ -1391,15 +1391,15 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   Altere a quantidade, valor unitário ou total individual de cada item. Novos totais serão calculados automaticamente.
                 </p>
 
-                <div className="max-h-60 overflow-y-auto rounded border bg-background">
-                  <Table className="text-xs">
+                <div className="max-h-72 overflow-y-auto rounded border bg-background overflow-x-auto">
+                  <Table className="text-xs w-full min-w-[600px]">
                     <TableHeader>
-                      <TableRow className="h-8">
-                        <TableHead className="py-1">Nome do Item</TableHead>
-                        <TableHead className="py-1 text-right w-20">Qtd</TableHead>
-                        <TableHead className="py-1 text-right w-24">Unitário (R$)</TableHead>
-                        <TableHead className="py-1 text-right w-28">Total (R$)</TableHead>
-                        <TableHead className="py-1 text-center w-10"></TableHead>
+                      <TableRow className="h-8 bg-muted/50">
+                        <TableHead className="py-1 min-w-[160px]">Nome do Item</TableHead>
+                        <TableHead className="py-1 text-right w-24">Qtd</TableHead>
+                        <TableHead className="py-1 text-right w-32">Unitário (R$)</TableHead>
+                        <TableHead className="py-1 text-right w-36">Total (R$)</TableHead>
+                        <TableHead className="py-1 text-center w-12"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1412,12 +1412,12 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                       ) : (
                         itemAddendumList.map((item) => (
                           <TableRow key={item.id} className="h-9">
-                            <TableCell className="py-1 font-medium min-w-[120px]">
+                            <TableCell className="py-1 font-medium">
                               <Input
                                 type="text"
                                 value={item.name}
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "name", e.target.value)}
-                                className="h-7 text-xs bg-background"
+                                className="h-8 text-xs bg-background"
                               />
                             </TableCell>
                             <TableCell className="py-1 text-right">
@@ -1427,7 +1427,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "quantity", e.target.value)}
                                 step="1"
                                 min="0"
-                                className="h-7 text-xs text-right ml-auto"
+                                className="h-8 text-xs text-right w-20 ml-auto font-mono"
                               />
                             </TableCell>
                             <TableCell className="py-1 text-right">
@@ -1437,7 +1437,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "unitPrice", e.target.value)}
                                 step="0.01"
                                 min="0"
-                                className="h-7 text-xs text-right ml-auto"
+                                className="h-8 text-xs text-right w-28 ml-auto font-mono"
                               />
                             </TableCell>
                             <TableCell className="py-1 text-right font-semibold">
@@ -1447,7 +1447,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 onChange={(e) => handleItemAddendumFieldChange(item.id, "totalPrice", e.target.value)}
                                 step="0.01"
                                 min="0"
-                                className="h-7 text-xs font-bold text-right ml-auto text-primary"
+                                className="h-8 text-xs font-bold text-right w-32 ml-auto font-mono text-primary"
                               />
                             </TableCell>
                             <TableCell className="py-1 text-center">
@@ -1455,11 +1455,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
                                 onClick={() => handleRemoveItemAddendumRow(item.id)}
                                 title="Remover item"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -1614,16 +1614,16 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                     Você pode alterar o percentual geral acima ou digitar diretamente o <strong>novo valor unitário em reais (R$)</strong> de qualquer item abaixo:
                   </p>
 
-                  <div className="max-h-60 overflow-y-auto rounded border bg-background">
-                    <Table className="text-xs">
+                  <div className="max-h-72 overflow-y-auto rounded border bg-background overflow-x-auto">
+                    <Table className="text-xs w-full min-w-[650px]">
                       <TableHeader>
-                        <TableRow className="h-8">
-                          <TableHead className="py-1">Item</TableHead>
-                          <TableHead className="py-1 text-right">Qtd</TableHead>
-                          <TableHead className="py-1 text-right">Preço Atual</TableHead>
-                          <TableHead className="py-1 text-right w-24">% Reajuste</TableHead>
-                          <TableHead className="py-1 text-right w-28">Novo Preço (R$)</TableHead>
-                          <TableHead className="py-1 text-right">Novo Total</TableHead>
+                        <TableRow className="h-8 bg-muted/50">
+                          <TableHead className="py-1 min-w-[160px]">Item</TableHead>
+                          <TableHead className="py-1 text-right w-20">Qtd</TableHead>
+                          <TableHead className="py-1 text-right w-28">Preço Atual</TableHead>
+                          <TableHead className="py-1 text-right w-28">% Reajuste</TableHead>
+                          <TableHead className="py-1 text-right w-32">Novo Preço (R$)</TableHead>
+                          <TableHead className="py-1 text-right w-32">Novo Total</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1636,13 +1636,13 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                         ) : (
                           rebalanceItems.map((item) => (
                             <TableRow key={item.id} className="h-9">
-                              <TableCell className="py-1 font-medium max-w-[140px] truncate" title={item.name}>
+                              <TableCell className="py-1 font-medium min-w-[160px]" title={item.name}>
                                 {item.name}
                               </TableCell>
-                              <TableCell className="py-1 text-right text-muted-foreground">
+                              <TableCell className="py-1 text-right text-muted-foreground font-mono">
                                 {item.quantity}
                               </TableCell>
-                              <TableCell className="py-1 text-right text-muted-foreground">
+                              <TableCell className="py-1 text-right text-muted-foreground font-mono">
                                 {formatCurrency(item.unitPrice)}
                               </TableCell>
                               <TableCell className="py-1 text-right">
@@ -1651,7 +1651,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                   value={item.percent || 0}
                                   onChange={(e) => handleItemPercentChange(item.id, parseFloat(e.target.value) || 0)}
                                   step="0.01"
-                                  className="h-7 w-20 text-xs text-right ml-auto"
+                                  className="h-8 w-24 text-xs font-mono text-right ml-auto"
                                 />
                               </TableCell>
                               <TableCell className="py-1 text-right">
@@ -1660,10 +1660,10 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                                   value={item.newUnitPrice || 0}
                                   onChange={(e) => handleItemPriceChange(item.id, parseFloat(e.target.value) || 0)}
                                   step="0.01"
-                                  className="h-7 w-24 text-xs font-semibold text-right ml-auto"
+                                  className="h-8 w-28 text-xs font-semibold font-mono text-right ml-auto text-primary"
                                 />
                               </TableCell>
-                              <TableCell className="py-1 text-right font-semibold">
+                              <TableCell className="py-1 text-right font-semibold font-mono text-primary">
                                 {formatCurrency(item.totalPrice)}
                               </TableCell>
                             </TableRow>
