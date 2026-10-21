@@ -35,7 +35,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
-import { ContractExceededReportDialog } from "@/components/contract-exceeded-report-dialog"
+import { ContractItemsReportDialog } from "@/components/contract-items-report-dialog"
 
 export default function ContratoDetalhesPage({ params }: { params: { id: string } }) {
   const { getContractById, deleteContract, addBalanceAdjustment, addAddendum, editAddendum, deleteAddendum, contracts } = useContracts()
@@ -47,7 +47,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   const [contract, setContract] = useState<Contract | null>(null)
   const [contractOrders, setContractOrders] = useState<typeof orders>([])
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [showExceededReportDialog, setShowExceededReportDialog] = useState(false)
+  const [showItemsReportDialog, setShowItemsReportDialog] = useState(false)
   const [showAddAdjustmentDialog, setShowAddAdjustmentDialog] = useState(false)
   const [adjustmentAmount, setAdjustmentAmount] = useState("")
   const [adjustmentDescription, setAdjustmentDescription] = useState("")
@@ -579,11 +579,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         <div className="flex gap-2 flex-wrap">
           <Button
             variant="outline"
-            className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-            onClick={() => setShowExceededReportDialog(true)}
+            className="border-primary/40 text-primary hover:bg-primary/10"
+            onClick={() => setShowItemsReportDialog(true)}
           >
-            <AlertTriangle className="mr-2 h-4 w-4 text-red-600" />
-            Relatório de Itens Excedidos
+            <FileText className="mr-2 h-4 w-4 text-primary" />
+            Relatório de Itens
           </Button>
           <Button variant="outline" onClick={() => router.push(`/dashboard/contratos/editar/${contract.id}`)}>
             <Edit className="mr-2 h-4 w-4" />
@@ -750,10 +750,10 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                   size="sm"
                   variant="destructive"
                   className="bg-red-700 hover:bg-red-800 text-white shrink-0"
-                  onClick={() => setShowExceededReportDialog(true)}
+                  onClick={() => setShowItemsReportDialog(true)}
                 >
                   <FileText className="mr-2 h-4 w-4" />
-                  Ver Relatório de Itens Excedidos
+                  Ver Relatório de Itens
                 </Button>
               </div>
             )}
@@ -865,9 +865,9 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
             <CardTitle>Itens do Contrato {selectedPeriod ? `(${selectedPeriod.name})` : "(Vigência Atual)"}</CardTitle>
             <CardDescription>Lista de todos os itens e consumo da vigência selecionada</CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setShowExceededReportDialog(true)}>
-            <AlertTriangle className="mr-2 h-4 w-4 text-red-600" />
-            Relatório de Excesso
+          <Button variant="outline" size="sm" onClick={() => setShowItemsReportDialog(true)}>
+            <FileText className="mr-2 h-4 w-4 text-primary" />
+            Relatório de Itens
           </Button>
         </CardHeader>
         <CardContent>
@@ -1807,11 +1807,11 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Diálogo do Relatório de Itens Excedidos */}
+      {/* Diálogo do Relatório Geral de Itens do Contrato */}
       {contract && (
-        <ContractExceededReportDialog
-          open={showExceededReportDialog}
-          onOpenChange={setShowExceededReportDialog}
+        <ContractItemsReportDialog
+          open={showItemsReportDialog}
+          onOpenChange={setShowItemsReportDialog}
           contract={contract}
           contractOrders={contractOrders}
         />

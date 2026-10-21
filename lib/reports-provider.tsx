@@ -25,6 +25,7 @@ type ReportsContextType = {
   generateBackup: () => void
   generateOrderExtrapolationReport: (order: Order, contract: Contract, format?: ReportFormat) => void
   generateContractExtrapolationReport: (contract: Contract, contractOrders: Order[], format?: ReportFormat) => void
+  generateContractItemsReport: (contract: Contract, contractOrders: Order[], format?: ReportFormat) => void
 }
 
 const ReportsContext = createContext<ReportsContextType | undefined>(undefined)
@@ -737,6 +738,176 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const generateContractItemsReport = (contract: Contract, contractOrders: Order[], format: ReportFormat = "pdf") => {
+    const items = contract.items || []
+    const sortedOrders = [...(contractOrders || [])].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    )
+
+    if (format === "pdf") {
+      const doc = new jsPDF()
+
+      doc.setFontSize(16)
+      doc.setTextColor(20, 50, 100)
+      doc.text("RELATÓRIO GERAL DE ITENS DO CONTRATO", 14, 20)
+
+      doc.setFontSize(9)
+      doc.setTextColor(60, 60, 60)
+      doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
+      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${contract.company}`, 14, 34)
+      doc.text(`Valor Total Contratado: R$ ${contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, 40)
+      doc.text(`Valor Total Consumido: R$ ${contract.usedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${contract.usedPercentage}%)`, 14, 46)
+
+      const saldo = contract.value - contract.usedValue
+      if (saldo < 0) {
+        doc.setTextColor(180, 0, 0)
+        doc.text(`Saldo Disponível: R$ ${saldo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (SALDO NEGATIVO / EXTRAPOLADO)`, 14, 52)
+      } else {
+        doc.setTextColor(0, 100, 0)
+        doc.text(`Saldo Disponível: R$ ${saldo.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (Dentro do Limite)`, 14, 52)
+      }
+
+      doc.setTextColor(0, 0, 0)
+      doc.setFontSize(11)
+      doc.text("1. Demonstrativo de Itens (Quantidade e Valores)", 14, 62)
+
+      const itemTableData: any[] = []
+      let totalQty = 0
+      let totalUsedQty = 0
+      let totalAvailableQty = 0
+
+      if (items.length === 0) {
+        itemTableData.push(["Nenhum item cadastrado neste contrato.", "-", "-", "-", "-", "-", "-", "-"])
+      } else {
+        items.forEach((item) => {
+          const qty = item.quantity || 0
+          const usedQty = item.usedQuantity || 0
+          const availableQty = Math.max(0, qty - usedQty)
+          const unitPrice = item.unitPrice || 0
+          const totalVal = qty * unitPrice
+          const usedVal = usedQty * unitPrice
+          const saldoVal = (qty - usedQty) * unitPrice
+
+          totalQty += qty
+          totalUsedQty += usedQty
+          totalAvailableQty += availableQty
+
+          const saldoStr = saldoVal < 0 
+            ? `-R$ ${Math.abs(saldoVal).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+            : `R$ ${saldoVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+
+          const availStr = usedQty > qty 
+            ? `+${usedQty - qty} exced.`
+            : `${availableQty} un`
+
+          itemTableData.push([
+            item.name,
+            `${qty} un`,
+            `${usedQty} un`,
+            availStr,
+            `R$ ${unitPrice.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+            `R$ ${totalVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+            `R$ ${usedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+            saldoStr
+          ])
+        })
+      }
+
+      autoTable(doc, {
+        head: [["Item / Produto", "Qtd Total", "Qtd Usada", "Qtd Disp.", "Preço Unit.", "Valor Total", "Valor Usado", "Saldo (R$)"]],
+        body: itemTableData,
+        startY: 66,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [30, 64, 175] },
+        columnStyles: {
+          3: { fontStyle: "bold" },
+          7: { fontStyle: "bold" }
+        }
+      })
+
+      let currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 130
+
+      doc.setFontSize(11)
+      doc.setTextColor(0, 0, 0)
+      doc.text("2. Histórico de Pedidos Realizados no Contrato", 14, currentY)
+
+      const orderRows: any[] = []
+      sortedOrders.forEach((o) => {
+        if (o.status === "cancelado") return
+        const itemCount = o.items?.reduce((acc, i) => acc + (i.quantity || 0), 0) || 0
+        orderRows.push([
+          o.number,
+          new Date(o.date).toLocaleDateString("pt-BR"),
+          o.requestedBy || "Não informado",
+          o.requestedFor || "Geral",
+          `${itemCount} un (${o.items?.length || 0} itens)`,
+          `R$ ${(o.totalValue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          o.status ? o.status.toUpperCase() : "CONCLUÍDO"
+        ])
+      })
+
+      if (orderRows.length === 0) {
+        orderRows.push(["Nenhum pedido registrado para este contrato", "-", "-", "-", "-", "-", "-"])
+      }
+
+      autoTable(doc, {
+        head: [["Pedido Nº", "Data", "Solicitante", "Destino", "Qtd Total Pedida", "Valor do Pedido", "Status"]],
+        body: orderRows,
+        startY: currentY + 4,
+        styles: { fontSize: 7.5 },
+        headStyles: { fillColor: [51, 65, 85] }
+      })
+
+      currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : currentY + 40
+
+      doc.setFontSize(9)
+      doc.setTextColor(0, 0, 0)
+      doc.text("Resumo Geral:", 14, currentY)
+      doc.text(`• Total de Itens: ${items.length} cadastrados | Unidades Totais: ${totalQty} un (Usadas: ${totalUsedQty} un, Disponíveis: ${totalAvailableQty} un)`, 14, currentY + 6)
+      doc.text(`• Valor Total Contratual: R$ ${contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} | Consumido: R$ ${contract.usedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} | Saldo: R$ ${(contract.value - contract.usedValue).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, currentY + 12)
+      doc.text(`• Total de Pedidos Concluídos: ${orderRows.filter(r => r[0] !== "Nenhum pedido registrado para este contrato").length} pedido(s)`, 14, currentY + 18)
+
+      doc.save(`relatorio-itens-contrato-${contract.number}.pdf`)
+    } else {
+      const csvContent = [
+        ["Item", "Descricao", "Qtd Total Contrato", "Qtd Usada", "Qtd Disponivel", "Preco Unitario (R$)", "Valor Total Contratado (R$)", "Valor Total Usado (R$)", "Saldo Disponivel (R$)", "Percentual Usado (%)", "Status"].join(";"),
+        ...items.map((item) => {
+          const qty = item.quantity || 0
+          const usedQty = item.usedQuantity || 0
+          const availQty = qty - usedQty
+          const unitPrice = item.unitPrice || 0
+          const totalVal = qty * unitPrice
+          const usedVal = usedQty * unitPrice
+          const saldoVal = availQty * unitPrice
+          const pct = qty > 0 ? ((usedQty / qty) * 100).toFixed(1) : "0.0"
+          const status = usedQty > qty ? "Excedido" : usedQty === qty ? "Esgotado" : "Disponível"
+
+          return [
+            `"${(item.name || "").replace(/"/g, '""')}"`,
+            `"${(item.description || "").replace(/"/g, '""')}"`,
+            qty,
+            usedQty,
+            availQty,
+            unitPrice.toFixed(2),
+            totalVal.toFixed(2),
+            usedVal.toFixed(2),
+            saldoVal.toFixed(2),
+            pct,
+            status
+          ].join(";")
+        })
+      ].join("\n")
+
+      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `relatorio-itens-contrato-${contract.number}.csv`
+      link.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   const generateBackup = () => {
     const backupData = {
       version: "1.0.0",
@@ -767,6 +938,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         generateBackup,
         generateOrderExtrapolationReport,
         generateContractExtrapolationReport,
+        generateContractItemsReport,
       }}
     >
       {children}
