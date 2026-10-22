@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useToast } from "@/hooks/use-toast"
 import { ContractItemsReportDialog } from "@/components/contract-items-report-dialog"
+import { ContractExceededReportDialog } from "@/components/contract-exceeded-report-dialog"
 
 export default function ContratoDetalhesPage({ params }: { params: { id: string } }) {
   const { getContractById, deleteContract, addBalanceAdjustment, addAddendum, editAddendum, deleteAddendum, contracts } = useContracts()
@@ -48,6 +49,7 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
   const [contractOrders, setContractOrders] = useState<typeof orders>([])
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showItemsReportDialog, setShowItemsReportDialog] = useState(false)
+  const [showExceededReportDialog, setShowExceededReportDialog] = useState(false)
   const [showAddAdjustmentDialog, setShowAddAdjustmentDialog] = useState(false)
   const [adjustmentAmount, setAdjustmentAmount] = useState("")
   const [adjustmentDescription, setAdjustmentDescription] = useState("")
@@ -583,7 +585,15 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
             onClick={() => setShowItemsReportDialog(true)}
           >
             <FileText className="mr-2 h-4 w-4 text-primary" />
-            Relatório de Itens
+            Relatório Geral de Itens
+          </Button>
+          <Button
+            variant="outline"
+            className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+            onClick={() => setShowExceededReportDialog(true)}
+          >
+            <AlertTriangle className="mr-2 h-4 w-4 text-red-600" />
+            Relatório de Itens Excedidos
           </Button>
           <Button variant="outline" onClick={() => router.push(`/dashboard/contratos/editar/${contract.id}`)}>
             <Edit className="mr-2 h-4 w-4" />
@@ -746,15 +756,26 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
                     </p>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  className="bg-red-700 hover:bg-red-800 text-white shrink-0"
-                  onClick={() => setShowItemsReportDialog(true)}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  Ver Relatório de Itens
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="bg-red-700 hover:bg-red-800 text-white shrink-0"
+                    onClick={() => setShowExceededReportDialog(true)}
+                  >
+                    <AlertTriangle className="mr-2 h-4 w-4" />
+                    Ver Itens Excedidos
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-white border-red-300 text-red-900 hover:bg-red-50 shrink-0"
+                    onClick={() => setShowItemsReportDialog(true)}
+                  >
+                    <FileText className="mr-2 h-4 w-4" />
+                    Relatório Geral
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -865,10 +886,21 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
             <CardTitle>Itens do Contrato {selectedPeriod ? `(${selectedPeriod.name})` : "(Vigência Atual)"}</CardTitle>
             <CardDescription>Lista de todos os itens e consumo da vigência selecionada</CardDescription>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setShowItemsReportDialog(true)}>
-            <FileText className="mr-2 h-4 w-4 text-primary" />
-            Relatório de Itens
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowItemsReportDialog(true)}>
+              <FileText className="mr-2 h-4 w-4 text-primary" />
+              Relatório Geral
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800"
+              onClick={() => setShowExceededReportDialog(true)}
+            >
+              <AlertTriangle className="mr-2 h-4 w-4 text-red-600" />
+              Itens Excedidos
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
@@ -1809,12 +1841,20 @@ export default function ContratoDetalhesPage({ params }: { params: { id: string 
 
       {/* Diálogo do Relatório Geral de Itens do Contrato */}
       {contract && (
-        <ContractItemsReportDialog
-          open={showItemsReportDialog}
-          onOpenChange={setShowItemsReportDialog}
-          contract={contract}
-          contractOrders={contractOrders}
-        />
+        <>
+          <ContractItemsReportDialog
+            open={showItemsReportDialog}
+            onOpenChange={setShowItemsReportDialog}
+            contract={contract}
+            contractOrders={contractOrders}
+          />
+          <ContractExceededReportDialog
+            open={showExceededReportDialog}
+            onOpenChange={setShowExceededReportDialog}
+            contract={contract}
+            contractOrders={contractOrders}
+          />
+        </>
       )}
     </div>
   )
