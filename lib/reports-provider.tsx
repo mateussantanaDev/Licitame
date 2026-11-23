@@ -61,55 +61,11 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const getContractItemsClean = (contract: Contract, maxItems = 3): string => {
-    if (contract.items && Array.isArray(contract.items) && contract.items.length > 0) {
-      const validItems = contract.items
-        .map((item, idx) => {
-          const rawName =
-            item.name && item.name !== "Sem nome"
-              ? item.name
-              : item.description && item.description !== "Sem descrição"
-              ? item.description
-              : `Item ${idx + 1}`
-          const cleanName = rawName.length > 38 ? `${rawName.substring(0, 35)}...` : rawName
-          const qty = item.quantity > 0 ? ` (${item.quantity} un)` : ""
-          return `• ${cleanName}${qty}`
-        })
-        .filter(Boolean)
-
-      if (validItems.length > 0) {
-        if (validItems.length <= maxItems) {
-          return validItems.join("\n")
-        }
-        return `${validItems.slice(0, maxItems).join("\n")}\n(+${validItems.length - maxItems} outros itens)`
-      }
+  const getContractDescription = (contract: Contract): string => {
+    if (contract.description && contract.description.trim()) {
+      return contract.description.trim()
     }
-
-    const desc = contract.description || "Objeto não informado"
-    return desc.length > 85 ? `${desc.substring(0, 82)}...` : desc
-  }
-
-  const getContractItemsCsv = (contract: Contract): string => {
-    if (contract.items && Array.isArray(contract.items) && contract.items.length > 0) {
-      const validItems = contract.items
-        .map((item) => {
-          const name =
-            item.name && item.name !== "Sem nome"
-              ? item.name
-              : item.description && item.description !== "Sem descrição"
-              ? item.description
-              : ""
-          if (!name) return ""
-          return item.quantity > 0 ? `${name} (${item.quantity} un)` : name
-        })
-        .filter(Boolean)
-
-      if (validItems.length > 0) {
-        return validItems.join(" | ")
-      }
-    }
-
-    return contract.description || "Não informado"
+    return "Objeto não informado"
   }
 
   const escapeCsv = (val: any): string => {
@@ -331,8 +287,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         // Coluna 2: Secretaria / Órgão Demandante
         const sec = contract.costBase || contract.contractingParty || "Geral / Não informada"
 
-        // Coluna 3: Itens Contratados / Objeto Estruturado
-        const items = getContractItemsClean(contract, 3)
+        // Coluna 3: Objeto do Contrato (Descrição cadastrada)
+        const objeto = getContractDescription(contract)
 
         // Coluna 4: Prazos e Vigência com Cálculo Preciso
         const start = contract.startDate ? new Date(contract.startDate).toLocaleDateString("pt-BR") : "-"
@@ -369,7 +325,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         }
         const col6 = `[ ${statusUpper} ]\n${rec}`
 
-        return [col0Lines.join("\n"), col1, sec, items, col4, col5, col6]
+        return [col0Lines.join("\n"), col1, sec, objeto, col4, col5, col6]
       })
 
       const bodyData = tableRows.length > 0
@@ -382,7 +338,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
             "Contrato / Processo",
             "Fornecedor Contratado",
             "Secretaria Demandante",
-            "Itens Contratados / Objeto",
+            "Objeto do Contrato",
             "Vigência & Prazos",
             "Execução Financeira",
             "Situação / Recomendação",
@@ -496,7 +452,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         "Fornecedor",
         "CNPJ",
         "Secretaria Demandante",
-        "Itens do Contrato / Objeto",
+        "Objeto do Contrato",
         "Data Início",
         "Data Vencimento",
         "Dias Vencidos / Restantes",
@@ -516,7 +472,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         const saldoVal = contractVal - usedVal
         const pct = contract.usedPercentage || (contractVal > 0 ? Math.round((usedVal / contractVal) * 100) : 0)
         const costBase = contract.costBase || contract.contractingParty || "Não informada"
-        const itemsText = getContractItemsCsv(contract)
+        const objeto = getContractDescription(contract)
         const expDate = contract.expirationDate ? new Date(contract.expirationDate) : null
         let diasLabel = "-"
         if (expDate && expDate <= now) {
@@ -543,7 +499,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           contract.company,
           contract.cnpj || "-",
           costBase,
-          itemsText,
+          objeto,
           contract.startDate ? new Date(contract.startDate).toLocaleDateString("pt-BR") : "-",
           contract.expirationDate ? new Date(contract.expirationDate).toLocaleDateString("pt-BR") : "-",
           diasLabel,
