@@ -61,18 +61,19 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const getContractItemsText = (contract: Contract, maxItems = 5): string => {
+  const getContractItemsClean = (contract: Contract, maxItems = 3): string => {
     if (contract.items && Array.isArray(contract.items) && contract.items.length > 0) {
       const validItems = contract.items
-        .map((item) => {
-          const name =
+        .map((item, idx) => {
+          const rawName =
             item.name && item.name !== "Sem nome"
               ? item.name
               : item.description && item.description !== "Sem descrição"
               ? item.description
-              : ""
-          if (!name) return ""
-          return item.quantity > 0 ? `${name} (${item.quantity} un)` : name
+              : `Item ${idx + 1}`
+          const cleanName = rawName.length > 38 ? `${rawName.substring(0, 35)}...` : rawName
+          const qty = item.quantity > 0 ? ` (${item.quantity} un)` : ""
+          return `• ${cleanName}${qty}`
         })
         .filter(Boolean)
 
@@ -80,11 +81,12 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         if (validItems.length <= maxItems) {
           return validItems.join("\n")
         }
-        return `${validItems.slice(0, maxItems).join("\n")}\n(+${validItems.length - maxItems} itens)`
+        return `${validItems.slice(0, maxItems).join("\n")}\n(+${validItems.length - maxItems} outros itens)`
       }
     }
 
-    return contract.description || "Não informado"
+    const desc = contract.description || "Objeto não informado"
+    return desc.length > 85 ? `${desc.substring(0, 82)}...` : desc
   }
 
   const getContractItemsCsv = (contract: Contract): string => {
@@ -114,6 +116,45 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     if (val === null || val === undefined) return '""'
     const str = String(val).replace(/"/g, '""')
     return `"${str}"`
+  }
+
+  const drawKpiCard = (
+    doc: jsPDF,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    label: string,
+    value: string,
+    subtext: string,
+    accentColor: [number, number, number]
+  ) => {
+    // Fundo do card
+    doc.setFillColor(255, 255, 255)
+    doc.setDrawColor(226, 232, 240)
+    doc.roundedRect(x, y, w, h, 2, 2, "FD")
+
+    // Barra lateral de destaque
+    doc.setFillColor(accentColor[0], accentColor[1], accentColor[2])
+    doc.roundedRect(x, y, 2.5, h, 1, 1, "F")
+
+    // Rótulo
+    doc.setFontSize(6.5)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(100, 116, 139)
+    doc.text(label.toUpperCase(), x + 5, y + 4.5)
+
+    // Valor Principal
+    doc.setFontSize(10.5)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(15, 23, 42)
+    doc.text(value, x + 5, y + 10)
+
+    // Subtexto de Apoio
+    doc.setFontSize(6.5)
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(148, 163, 184)
+    doc.text(subtext, x + 5, y + 14.5)
   }
 
   const generateContractsReport = (format: ReportFormat, filters?: ReportFilter) => {
@@ -146,122 +187,301 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
     const isExtrapolatedFilter = filters?.status === "extrapolado"
     const isExpiredFilter = filters?.status === "vencido"
+    const now = new Date()
+
+    // Métricas Executivas para Gestão
+    const totalCount = filteredContracts.length
+    const vencidosCount = filteredContracts.filter((c) => {
+      const exp = c.expirationDate ? new Date(c.expirationDate) : null
+      return c.status === "vencido" || (exp && exp <= now)
+    }).length
+
+    const totalContractVal = filteredContracts.reduce((sum, c) => sum + (c.value || c.totalValue || 0), 0)
+    const totalUsedVal = filteredContracts.reduce((sum, c) => sum + (c.usedValue || 0), 0)
+    const totalRemainingVal = totalContractVal - totalUsedVal
+    const avgExecutionPct = totalContractVal > 0 ? Math.round((totalUsedVal / totalContractVal) * 100) : 0
 
     if (format === "pdf") {
-      const doc = new jsPDF({ orientation: "landscape" })
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
 
-      doc.setFontSize(16)
+      // Barra superior decorativa executiva (Navy)
+      doc.setFillColor(15, 23, 42)
+      doc.rect(0, 0, 297, 3.5, "F")
+
+      // Identidade do Sistema
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8)
+      doc.setTextColor(37, 99, 235)
+      doc.text("LICITAME  •  SISTEMA INTEGRADO DE GESTÃO ESTRATÉGICA DE CONTRATOS", 14, 11)
+
+      // Título do Relatório
+      let docTitle = "RELATÓRIO GERENCIAL DE CONTRATOS ADMINISTRATIVOS"
       if (isExtrapolatedFilter) {
-        doc.setTextColor(180, 0, 0)
-        doc.text("RELATÓRIO DE CONTRATOS COM SALDO EXTRAPOLADO", 14, 20)
+        docTitle = "RELATÓRIO EXECUTIVO DE CONTRATOS COM SALDO EXTRAPOLADO"
+        doc.setTextColor(185, 28, 28)
       } else if (isExpiredFilter) {
-        doc.setTextColor(220, 38, 38)
-        doc.text("RELATÓRIO DE CONTRATOS VENCIDOS", 14, 20)
+        docTitle = "RELATÓRIO EXECUTIVO DE CONTRATOS VENCIDOS"
+        doc.setTextColor(185, 28, 28)
       } else if (filters?.status && filters.status !== "all") {
-        doc.setTextColor(0, 0, 0)
-        doc.text(`RELATÓRIO DE CONTRATOS (${filters.status.toUpperCase()})`, 14, 20)
+        docTitle = `RELATÓRIO EXECUTIVO DE CONTRATOS (${filters.status.toUpperCase()})`
+        doc.setTextColor(15, 23, 42)
       } else {
-        doc.setTextColor(0, 0, 0)
-        doc.text("Relatório Geral de Contratos", 14, 20)
+        doc.setTextColor(15, 23, 42)
       }
 
-      doc.setFontSize(10)
-      doc.setTextColor(60, 60, 60)
-      doc.text(`Data de geração: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
-      doc.text(`Total de contratos listados: ${filteredContracts.length}`, 14, 34)
+      doc.setFontSize(15)
+      doc.setFont("helvetica", "bold")
+      doc.text(docTitle, 14, 18)
 
-      if (isExtrapolatedFilter) {
-        const totalExtrapolatedValue = filteredContracts.reduce(
-          (sum, c) => sum + Math.max(0, c.usedValue - c.value),
-          0
-        )
-        doc.text(
-          `Montante Total Extrapolado no Saldo Global: R$ ${totalExtrapolatedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-          14,
-          40
-        )
-      } else if (isExpiredFilter) {
-        const totalExpiredValue = filteredContracts.reduce(
-          (sum, c) => sum + (c.value || c.totalValue || 0),
-          0
-        )
-        doc.text(
-          `Montante Total dos Contratos Vencidos: R$ ${totalExpiredValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-          14,
-          40
-        )
-      }
+      // Subtítulo Gerencial
+      doc.setFontSize(8.5)
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(100, 116, 139)
+      doc.text("Painel analítico para tomada de decisões, monitoramento de prazos de vigência e saldo por secretaria.", 14, 24)
 
-      const startY = isExtrapolatedFilter || isExpiredFilter ? 46 : 40
+      // Box de Metadados de Emissão (Canto Superior Direito)
+      doc.setFillColor(248, 250, 252)
+      doc.setDrawColor(203, 213, 225)
+      doc.roundedRect(217, 7, 66, 20, 2, 2, "FD")
 
-      const tableData = filteredContracts.map((contract) => {
+      doc.setFontSize(7)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(71, 85, 105)
+      doc.text("PARÂMETROS DE EMISSÃO", 221, 11.5)
+
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(6.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text(`Data/Hora: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`, 221, 15.5)
+      doc.text(`Filtro Status: ${isExpiredFilter ? "Vencidos" : isExtrapolatedFilter ? "Extrapolados" : filters?.status ? filters.status.toUpperCase() : "Todos"}`, 221, 19.5)
+      const secFilterText = filters?.costBase ? (filters.costBase.length > 22 ? filters.costBase.substring(0, 20) + "..." : filters.costBase) : "Todas as Secretarias"
+      doc.text(`Secretaria: ${secFilterText}`, 221, 23.5)
+
+      // 4 Cards de KPIs Executivos
+      drawKpiCard(
+        doc,
+        14,
+        30,
+        64,
+        17,
+        "Contratos Analisados",
+        `${totalCount} contrato${totalCount !== 1 ? "s" : ""}`,
+        isExpiredFilter ? `${vencidosCount} com prazo de vigência expirado` : `${vencidosCount} com vigência expirada`,
+        isExpiredFilter || vencidosCount > 0 ? [220, 38, 38] : [37, 99, 235]
+      )
+
+      drawKpiCard(
+        doc,
+        82,
+        30,
+        64,
+        17,
+        "Montante Total Contratado",
+        `R$ ${totalContractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        "Soma global do valor homologado",
+        [15, 23, 42]
+      )
+
+      drawKpiCard(
+        doc,
+        150,
+        30,
+        64,
+        17,
+        "Execução Financeira",
+        `R$ ${totalUsedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `${avgExecutionPct}% de consumo médio apurado`,
+        [124, 58, 237]
+      )
+
+      drawKpiCard(
+        doc,
+        218,
+        30,
+        65,
+        17,
+        totalRemainingVal < 0 ? "Saldo Total Extrapolado" : "Saldo Remanescente",
+        totalRemainingVal < 0
+          ? `-R$ ${Math.abs(totalRemainingVal).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+          : `R$ ${totalRemainingVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        totalRemainingVal < 0 ? "Atenção: consumo acima do teto pactuado" : "Disponível para emissão de pedidos",
+        totalRemainingVal < 0 ? [220, 38, 38] : [16, 185, 129]
+      )
+
+      // Mapeamento dos Dados da Tabela Executiva
+      const tableRows = filteredContracts.map((contract) => {
         const contractVal = contract.value || contract.totalValue || 0
         const usedVal = contract.usedValue || 0
-        const excessVal = Math.max(0, usedVal - contractVal)
-        const costBase = contract.costBase || contract.contractingParty || "Não informada"
-        const itemsSummary = getContractItemsText(contract)
+        const saldoVal = contractVal - usedVal
+        const pct = contract.usedPercentage || (contractVal > 0 ? Math.round((usedVal / contractVal) * 100) : 0)
 
-        if (isExtrapolatedFilter) {
-          return [
-            contract.number,
-            contract.company,
-            costBase,
-            itemsSummary,
-            `R$ ${contractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-            `R$ ${usedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-            `R$ ${excessVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-            `${contract.usedPercentage}%`,
-            contract.status,
-          ]
+        // Coluna 0: Identificação do Contrato / Processo
+        const num = contract.number || "Sem nº"
+        const proc = contract.administrativeProcess ? `PA: ${contract.administrativeProcess}` : ""
+        const preg = contract.electronicAuction ? `PE: ${contract.electronicAuction}` : ""
+        const col0Lines = [num]
+        if (proc) col0Lines.push(proc)
+        else if (preg) col0Lines.push(preg)
+
+        // Coluna 1: Empresa Fornecedora / CNPJ
+        const comp = contract.company || "Não informada"
+        const cnpj = contract.cnpj ? `CNPJ: ${contract.cnpj}` : ""
+        const col1 = cnpj ? `${comp}\n${cnpj}` : comp
+
+        // Coluna 2: Secretaria / Órgão Demandante
+        const sec = contract.costBase || contract.contractingParty || "Geral / Não informada"
+
+        // Coluna 3: Itens Contratados / Objeto Estruturado
+        const items = getContractItemsClean(contract, 3)
+
+        // Coluna 4: Prazos e Vigência com Cálculo Preciso
+        const start = contract.startDate ? new Date(contract.startDate).toLocaleDateString("pt-BR") : "-"
+        const end = contract.expirationDate ? new Date(contract.expirationDate).toLocaleDateString("pt-BR") : "-"
+        const expDate = contract.expirationDate ? new Date(contract.expirationDate) : null
+        let prazoNote = ""
+        if (expDate && expDate <= now) {
+          const days = Math.floor((now.getTime() - expDate.getTime()) / (1000 * 60 * 60 * 24))
+          prazoNote = `\nVencido há ${days}d`
+        } else if (expDate) {
+          const days = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          if (days <= 60) prazoNote = `\nExpira em ${days}d`
         }
+        const col4 = `Início: ${start}\nVenc: ${end}${prazoNote}`
 
-        return [
-          contract.number,
-          contract.company,
-          costBase,
-          itemsSummary,
-          new Date(contract.startDate).toLocaleDateString("pt-BR"),
-          new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
-          `R$ ${contractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-          `R$ ${usedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-          contract.status,
-        ]
+        // Coluna 5: Execução Financeira (Pactuado, Executado, Saldo)
+        const totalStr = `Pactuado: R$ ${contractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+        const usedStr = `Executado: R$ ${usedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${pct}%)`
+        const saldoStr = saldoVal < 0
+          ? `Extrapolado: -R$ ${Math.abs(saldoVal).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+          : `Saldo: R$ ${saldoVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+        const col5 = `${totalStr}\n${usedStr}\n${saldoStr}`
+
+        // Coluna 6: Situação e Ação de Gestão Recomendada
+        const statusUpper = (contract.status || "Ativo").toUpperCase()
+        const isExp = contract.status === "vencido" || (expDate && expDate <= now)
+        let rec = "Execução Normal"
+        if (usedVal > contractVal) {
+          rec = "Auditoria de Limite"
+        } else if (isExp) {
+          rec = usedVal >= contractVal * 0.9 ? "Encerrar Contrato" : "Avaliar Prorrogação"
+        } else if (contract.status === "cancelado") {
+          rec = "Contrato Cancelado"
+        }
+        const col6 = `[ ${statusUpper} ]\n${rec}`
+
+        return [col0Lines.join("\n"), col1, sec, items, col4, col5, col6]
       })
 
-      const head = isExtrapolatedFilter
-        ? [["Número", "Empresa", "Secretaria / Base", "Itens / Objeto", "Valor Contrato", "Valor Consumido", "Valor Extrapolado", "% Usado", "Status"]]
-        : [["Número", "Empresa", "Secretaria / Base", "Itens / Objeto", "Início", "Vencimento", "Valor Total", "Valor Usado", "Status"]]
+      const bodyData = tableRows.length > 0
+        ? tableRows
+        : [["Nenhum contrato encontrado com os filtros selecionados.", "-", "-", "-", "-", "-", "-"]]
 
       autoTable(doc, {
-        head: head,
-        body: tableData,
-        startY: startY,
-        styles: { fontSize: 8, cellPadding: 2, overflow: "linebreak" },
-        headStyles: {
-          fillColor: isExtrapolatedFilter
-            ? [180, 0, 0]
-            : isExpiredFilter
-            ? [220, 38, 38]
-            : [59, 130, 246],
-          fontStyle: "bold",
+        head: [
+          [
+            "Contrato / Processo",
+            "Fornecedor Contratado",
+            "Secretaria Demandante",
+            "Itens Contratados / Objeto",
+            "Vigência & Prazos",
+            "Execução Financeira",
+            "Situação / Recomendação",
+          ],
+        ],
+        body: bodyData,
+        startY: 50,
+        margin: { top: 18, bottom: 16, left: 14, right: 14 },
+        styles: {
+          font: "helvetica",
+          fontSize: 7,
+          textColor: [30, 41, 59],
+          lineColor: [226, 232, 240],
+          lineWidth: 0.1,
+          cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 },
+          overflow: "linebreak",
+          valign: "top",
         },
-        columnStyles: isExtrapolatedFilter
-          ? {
-              0: { cellWidth: 26 },
-              1: { cellWidth: 42 },
-              2: { cellWidth: 35 },
-              3: { cellWidth: 55 },
-              6: { fontStyle: "bold", textColor: [180, 0, 0] },
+        headStyles: {
+          fillColor: isExtrapolatedFilter ? [153, 27, 27] : isExpiredFilter ? [185, 28, 28] : [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: "bold",
+          cellPadding: 2.5,
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252],
+        },
+        columnStyles: {
+          0: { cellWidth: 28, fontStyle: "bold", textColor: [15, 23, 42] },
+          1: { cellWidth: 46 },
+          2: { cellWidth: 38 },
+          3: { cellWidth: 60 },
+          4: { cellWidth: 27, halign: "center" },
+          5: { cellWidth: 40, halign: "right" },
+          6: { cellWidth: 30, halign: "center" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            if (data.column.index === 4) {
+              const txt = String(data.cell.raw || "")
+              if (txt.includes("Vencido")) {
+                data.cell.styles.textColor = [185, 28, 28]
+                data.cell.styles.fontStyle = "bold"
+              }
             }
-          : {
-              0: { cellWidth: 26 },
-              1: { cellWidth: 42 },
-              2: { cellWidth: 35 },
-              3: { cellWidth: 55 },
-              5: isExpiredFilter ? { textColor: [220, 38, 38], fontStyle: "bold" } : {},
-              8: isExpiredFilter ? { textColor: [220, 38, 38], fontStyle: "bold" } : {},
-            },
+            if (data.column.index === 5) {
+              const txt = String(data.cell.raw || "")
+              if (txt.includes("Extrapolado")) {
+                data.cell.styles.textColor = [185, 28, 28]
+                data.cell.styles.fontStyle = "bold"
+              }
+            }
+            if (data.column.index === 6) {
+              const txt = String(data.cell.raw || "")
+              if (txt.includes("VENCIDO")) {
+                data.cell.styles.textColor = [185, 28, 28]
+              } else if (txt.includes("ATIVO")) {
+                data.cell.styles.textColor = [16, 185, 129]
+              }
+            }
+          }
+        },
       })
+
+      // Cabeçalho de Páginas Subsequentes e Rodapé em Todas as Páginas
+      const pageCount = (doc as any).internal.getNumberOfPages()
+      const emitDateStr = `${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+
+        // Cabeçalho a partir da página 2
+        if (i > 1) {
+          doc.setFontSize(7.5)
+          doc.setFont("helvetica", "bold")
+          doc.setTextColor(37, 99, 235)
+          doc.text("LICITAME", 14, 11)
+
+          doc.setFont("helvetica", "normal")
+          doc.setTextColor(100, 116, 139)
+          doc.text(` • ${docTitle}`, 28, 11)
+          doc.text(`Filtro: ${isExpiredFilter ? "Vencidos" : filters?.status || "Geral"} | Secretaria: ${filters?.costBase || "Todas"}`, 283, 11, { align: "right" })
+
+          doc.setDrawColor(226, 232, 240)
+          doc.line(14, 13, 283, 13)
+        }
+
+        // Rodapé Oficial em todas as páginas
+        doc.setDrawColor(226, 232, 240)
+        doc.line(14, 199, 283, 199)
+
+        doc.setFontSize(7)
+        doc.setFont("helvetica", "normal")
+        doc.setTextColor(148, 163, 184)
+        doc.text(`Sistema Licitame • Emitido em ${emitDateStr}`, 14, 203.5)
+        doc.text("Documento Gerencial para Tomada de Decisão • Uso Reservado", 148, 203.5, { align: "center" })
+        doc.text(`Página ${i} de ${pageCount}`, 283, 203.5, { align: "right" })
+      }
 
       let filePrefix = "relatorio-contratos"
       if (isExtrapolatedFilter) filePrefix = "relatorio-contratos-extrapolados"
@@ -270,71 +490,69 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
       doc.save(`${filePrefix}-${new Date().toISOString().split("T")[0]}.pdf`)
     } else if (format === "csv" || format === "excel") {
-      const csvHeader = isExtrapolatedFilter
-        ? [
-            "Número",
-            "Empresa",
-            "Secretaria / Base",
-            "Itens / Objeto",
-            "Início",
-            "Vencimento",
-            "Valor Contrato",
-            "Valor Consumido",
-            "Valor Extrapolado",
-            "% Usado",
-            "Status",
-          ]
-            .map(escapeCsv)
-            .join(";")
-        : [
-            "Número",
-            "Empresa",
-            "Secretaria / Base",
-            "Itens / Objeto",
-            "Início",
-            "Vencimento",
-            "Valor Total",
-            "Valor Usado",
-            "Status",
-          ]
-            .map(escapeCsv)
-            .join(";")
+      const csvHeader = [
+        "Contrato",
+        "Processo Administrativo",
+        "Fornecedor",
+        "CNPJ",
+        "Secretaria Demandante",
+        "Itens do Contrato / Objeto",
+        "Data Início",
+        "Data Vencimento",
+        "Dias Vencidos / Restantes",
+        "Valor Contratado (R$)",
+        "Valor Executado (R$)",
+        "Saldo (R$)",
+        "% Executado",
+        "Status",
+        "Ação Recomendada",
+      ]
+        .map(escapeCsv)
+        .join(";")
 
       const csvRows = filteredContracts.map((contract) => {
         const contractVal = contract.value || contract.totalValue || 0
         const usedVal = contract.usedValue || 0
-        const excessVal = Math.max(0, usedVal - contractVal)
+        const saldoVal = contractVal - usedVal
+        const pct = contract.usedPercentage || (contractVal > 0 ? Math.round((usedVal / contractVal) * 100) : 0)
         const costBase = contract.costBase || contract.contractingParty || "Não informada"
         const itemsText = getContractItemsCsv(contract)
+        const expDate = contract.expirationDate ? new Date(contract.expirationDate) : null
+        let diasLabel = "-"
+        if (expDate && expDate <= now) {
+          const days = Math.floor((now.getTime() - expDate.getTime()) / (1000 * 60 * 60 * 24))
+          diasLabel = `Vencido há ${days} dias`
+        } else if (expDate) {
+          const days = Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          diasLabel = `Restam ${days} dias`
+        }
 
-        if (isExtrapolatedFilter) {
-          return [
-            contract.number,
-            contract.company,
-            costBase,
-            itemsText,
-            new Date(contract.startDate).toLocaleDateString("pt-BR"),
-            new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
-            contractVal.toFixed(2),
-            usedVal.toFixed(2),
-            excessVal.toFixed(2),
-            `${contract.usedPercentage}%`,
-            contract.status,
-          ]
-            .map(escapeCsv)
-            .join(";")
+        const isExp = contract.status === "vencido" || (expDate && expDate <= now)
+        let rec = "Execução Normal"
+        if (usedVal > contractVal) {
+          rec = "Auditoria de Limite"
+        } else if (isExp) {
+          rec = usedVal >= contractVal * 0.9 ? "Encerrar Contrato" : "Avaliar Prorrogação"
+        } else if (contract.status === "cancelado") {
+          rec = "Contrato Cancelado"
         }
 
         return [
           contract.number,
+          contract.administrativeProcess || contract.electronicAuction || "-",
           contract.company,
+          contract.cnpj || "-",
           costBase,
           itemsText,
-          new Date(contract.startDate).toLocaleDateString("pt-BR"),
-          new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
+          contract.startDate ? new Date(contract.startDate).toLocaleDateString("pt-BR") : "-",
+          contract.expirationDate ? new Date(contract.expirationDate).toLocaleDateString("pt-BR") : "-",
+          diasLabel,
           contractVal.toFixed(2),
           usedVal.toFixed(2),
+          saldoVal.toFixed(2),
+          `${pct}%`,
           contract.status,
+          rec,
         ]
           .map(escapeCsv)
           .join(";")
