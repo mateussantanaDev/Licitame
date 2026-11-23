@@ -35,6 +35,13 @@ export default function RelatoriosPage() {
   const [format, setFormat] = useState<ReportFormat>("pdf")
   const [filters, setFilters] = useState<ReportFilter>({})
 
+  const uniqueCostBases = Array.from(
+    new Set([
+      ...contracts.map((c) => c.costBase).filter(Boolean),
+      ...costBases.map((cb) => cb.name).filter(Boolean),
+    ])
+  ).sort()
+
   const handleGenerateReport = (type: "contracts" | "orders" | "suppliers" | "products" | "costbase") => {
     generateReport(type, format, filters)
   }
@@ -184,6 +191,26 @@ export default function RelatoriosPage() {
                       <SelectItem value="vencido">Vencido</SelectItem>
                       <SelectItem value="expirado">Expirado</SelectItem>
                       <SelectItem value="cancelado">Cancelado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="contractCostBase">Secretaria / Base de Custo</Label>
+                  <Select
+                    value={filters.costBase || "all"}
+                    onValueChange={(value) => setFilters({ ...filters, costBase: value === "all" ? undefined : value })}
+                  >
+                    <SelectTrigger id="contractCostBase">
+                      <SelectValue placeholder="Todas as secretarias / bases" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas as secretarias / bases</SelectItem>
+                      {uniqueCostBases.map((cb) => (
+                        <SelectItem key={cb} value={cb}>
+                          {cb}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

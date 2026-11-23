@@ -164,14 +164,14 @@ const transformFirebaseContract = (data: any): Contract => {
   // Mapear items - procurar por ambas as chaves (items em inglês ou itens em português)
   const rawItems = data.items || data.itens || []
   const transformedItems = Array.isArray(rawItems) ? 
-    rawItems.map((item: any) => ({
-      id: item.id || "",
-      name: item.name || "Sem nome",
-      description: item.description || "Sem descrição",
-      quantity: Number(item.quantity) || 0,
-      unitPrice: Number(item.unitPrice) || 0,
-      totalPrice: Number(item.totalPrice) || 0,
-      usedQuantity: Number(item.usedQuantity) || 0,
+    rawItems.map((item: any, idx: number) => ({
+      id: String(item.id || item.item || `item_${idx}`),
+      name: item.name || item.nome || item.descricao || item.description || "Sem nome",
+      description: item.description || item.descricao || item.name || item.nome || "Sem descrição",
+      quantity: Number(item.quantity ?? item.quantidade ?? 0),
+      unitPrice: Number(item.unitPrice ?? item.valor_unitario ?? item.preco_unitario ?? 0),
+      totalPrice: Number(item.totalPrice ?? item.valor_total ?? item.preco_total ?? 0),
+      usedQuantity: Number(item.usedQuantity ?? item.quantidade_utilizada ?? 0),
     })) : []
 
   // Converter data de vencimento

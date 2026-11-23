@@ -18,6 +18,7 @@ export type ReportFilter = {
   status?: string
   category?: string
   type?: string
+  costBase?: string
 }
 
 type ReportsContextType = {
@@ -60,6 +61,61 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const getContractItemsText = (contract: Contract, maxItems = 5): string => {
+    if (contract.items && Array.isArray(contract.items) && contract.items.length > 0) {
+      const validItems = contract.items
+        .map((item) => {
+          const name =
+            item.name && item.name !== "Sem nome"
+              ? item.name
+              : item.description && item.description !== "Sem descrição"
+              ? item.description
+              : ""
+          if (!name) return ""
+          return item.quantity > 0 ? `${name} (${item.quantity} un)` : name
+        })
+        .filter(Boolean)
+
+      if (validItems.length > 0) {
+        if (validItems.length <= maxItems) {
+          return validItems.join("\n")
+        }
+        return `${validItems.slice(0, maxItems).join("\n")}\n(+${validItems.length - maxItems} itens)`
+      }
+    }
+
+    return contract.description || "Não informado"
+  }
+
+  const getContractItemsCsv = (contract: Contract): string => {
+    if (contract.items && Array.isArray(contract.items) && contract.items.length > 0) {
+      const validItems = contract.items
+        .map((item) => {
+          const name =
+            item.name && item.name !== "Sem nome"
+              ? item.name
+              : item.description && item.description !== "Sem descrição"
+              ? item.description
+              : ""
+          if (!name) return ""
+          return item.quantity > 0 ? `${name} (${item.quantity} un)` : name
+        })
+        .filter(Boolean)
+
+      if (validItems.length > 0) {
+        return validItems.join(" | ")
+      }
+    }
+
+    return contract.description || "Não informado"
+  }
+
+  const escapeCsv = (val: any): string => {
+    if (val === null || val === undefined) return '""'
+    const str = String(val).replace(/"/g, '""')
+    return `"${str}"`
+  }
+
   const generateContractsReport = (format: ReportFormat, filters?: ReportFilter) => {
     let filteredContracts = [...contracts]
 
@@ -74,23 +130,39 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         filteredContracts = filteredContracts.filter(
           (c) => c.usedValue > c.value || c.items?.some((i) => i.usedQuantity > i.quantity)
         )
+      } else if (filters.status === "vencido") {
+        filteredContracts = filteredContracts.filter(
+          (c) => c.status === "vencido" || new Date(c.expirationDate) <= new Date()
+        )
       } else {
         filteredContracts = filteredContracts.filter((c) => c.status === filters.status)
       }
     }
+    if (filters?.costBase && filters.costBase !== "all") {
+      filteredContracts = filteredContracts.filter(
+        (c) => (c.costBase || "").trim().toLowerCase() === filters.costBase!.trim().toLowerCase()
+      )
+    }
 
     const isExtrapolatedFilter = filters?.status === "extrapolado"
+    const isExpiredFilter = filters?.status === "vencido"
 
     if (format === "pdf") {
-      const doc = new jsPDF()
+      const doc = new jsPDF({ orientation: "landscape" })
 
       doc.setFontSize(16)
       if (isExtrapolatedFilter) {
         doc.setTextColor(180, 0, 0)
         doc.text("RELATÓRIO DE CONTRATOS COM SALDO EXTRAPOLADO", 14, 20)
+      } else if (isExpiredFilter) {
+        doc.setTextColor(220, 38, 38)
+        doc.text("RELATÓRIO DE CONTRATOS VENCIDOS", 14, 20)
+      } else if (filters?.status && filters.status !== "all") {
+        doc.setTextColor(0, 0, 0)
+        doc.text(`RELATÓRIO DE CONTRATOS (${filters.status.toUpperCase()})`, 14, 20)
       } else {
         doc.setTextColor(0, 0, 0)
-        doc.text("Relatório de Contratos", 14, 20)
+        doc.text("Relatório Geral de Contratos", 14, 20)
       }
 
       doc.setFontSize(10)
@@ -108,19 +180,33 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           14,
           40
         )
+      } else if (isExpiredFilter) {
+        const totalExpiredValue = filteredContracts.reduce(
+          (sum, c) => sum + (c.value || c.totalValue || 0),
+          0
+        )
+        doc.text(
+          `Montante Total dos Contratos Vencidos: R$ ${totalExpiredValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          14,
+          40
+        )
       }
 
-      const startY = isExtrapolatedFilter ? 46 : 40
+      const startY = isExtrapolatedFilter || isExpiredFilter ? 46 : 40
 
       const tableData = filteredContracts.map((contract) => {
         const contractVal = contract.value || contract.totalValue || 0
         const usedVal = contract.usedValue || 0
         const excessVal = Math.max(0, usedVal - contractVal)
+        const costBase = contract.costBase || contract.contractingParty || "Não informada"
+        const itemsSummary = getContractItemsText(contract)
 
         if (isExtrapolatedFilter) {
           return [
             contract.number,
             contract.company,
+            costBase,
+            itemsSummary,
             `R$ ${contractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
             `R$ ${usedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
             `R$ ${excessVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
@@ -132,6 +218,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         return [
           contract.number,
           contract.company,
+          costBase,
+          itemsSummary,
           new Date(contract.startDate).toLocaleDateString("pt-BR"),
           new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
           `R$ ${contractVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
@@ -141,41 +229,90 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       })
 
       const head = isExtrapolatedFilter
-        ? [["Número", "Empresa", "Valor Contrato", "Valor Consumido", "Valor Extrapolado", "% Usado", "Status"]]
-        : [["Número", "Empresa", "Início", "Vencimento", "Valor Total", "Valor Usado", "Status"]]
+        ? [["Número", "Empresa", "Secretaria / Base", "Itens / Objeto", "Valor Contrato", "Valor Consumido", "Valor Extrapolado", "% Usado", "Status"]]
+        : [["Número", "Empresa", "Secretaria / Base", "Itens / Objeto", "Início", "Vencimento", "Valor Total", "Valor Usado", "Status"]]
 
       autoTable(doc, {
         head: head,
         body: tableData,
         startY: startY,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: isExtrapolatedFilter ? [180, 0, 0] : [59, 130, 246] },
+        styles: { fontSize: 8, cellPadding: 2, overflow: "linebreak" },
+        headStyles: {
+          fillColor: isExtrapolatedFilter
+            ? [180, 0, 0]
+            : isExpiredFilter
+            ? [220, 38, 38]
+            : [59, 130, 246],
+          fontStyle: "bold",
+        },
         columnStyles: isExtrapolatedFilter
           ? {
-              4: { fontStyle: "bold", textColor: [180, 0, 0] },
+              0: { cellWidth: 26 },
+              1: { cellWidth: 42 },
+              2: { cellWidth: 35 },
+              3: { cellWidth: 55 },
+              6: { fontStyle: "bold", textColor: [180, 0, 0] },
             }
-          : {},
+          : {
+              0: { cellWidth: 26 },
+              1: { cellWidth: 42 },
+              2: { cellWidth: 35 },
+              3: { cellWidth: 55 },
+              5: isExpiredFilter ? { textColor: [220, 38, 38], fontStyle: "bold" } : {},
+              8: isExpiredFilter ? { textColor: [220, 38, 38], fontStyle: "bold" } : {},
+            },
       })
 
-      doc.save(
-        isExtrapolatedFilter
-          ? `relatorio-contratos-extrapolados-${new Date().toISOString().split("T")[0]}.pdf`
-          : `relatorio-contratos-${new Date().toISOString().split("T")[0]}.pdf`
-      )
+      let filePrefix = "relatorio-contratos"
+      if (isExtrapolatedFilter) filePrefix = "relatorio-contratos-extrapolados"
+      else if (isExpiredFilter) filePrefix = "relatorio-contratos-vencidos"
+      else if (filters?.status && filters.status !== "all") filePrefix = `relatorio-contratos-${filters.status}`
+
+      doc.save(`${filePrefix}-${new Date().toISOString().split("T")[0]}.pdf`)
     } else if (format === "csv" || format === "excel") {
       const csvHeader = isExtrapolatedFilter
-        ? ["Número", "Empresa", "Início", "Vencimento", "Valor Contrato", "Valor Consumido", "Valor Extrapolado", "% Usado", "Status"].join(";")
-        : ["Número", "Empresa", "Início", "Vencimento", "Valor Total", "Usado", "Status"].join(";")
+        ? [
+            "Número",
+            "Empresa",
+            "Secretaria / Base",
+            "Itens / Objeto",
+            "Início",
+            "Vencimento",
+            "Valor Contrato",
+            "Valor Consumido",
+            "Valor Extrapolado",
+            "% Usado",
+            "Status",
+          ]
+            .map(escapeCsv)
+            .join(";")
+        : [
+            "Número",
+            "Empresa",
+            "Secretaria / Base",
+            "Itens / Objeto",
+            "Início",
+            "Vencimento",
+            "Valor Total",
+            "Valor Usado",
+            "Status",
+          ]
+            .map(escapeCsv)
+            .join(";")
 
       const csvRows = filteredContracts.map((contract) => {
         const contractVal = contract.value || contract.totalValue || 0
         const usedVal = contract.usedValue || 0
         const excessVal = Math.max(0, usedVal - contractVal)
+        const costBase = contract.costBase || contract.contractingParty || "Não informada"
+        const itemsText = getContractItemsCsv(contract)
 
         if (isExtrapolatedFilter) {
           return [
             contract.number,
             contract.company,
+            costBase,
+            itemsText,
             new Date(contract.startDate).toLocaleDateString("pt-BR"),
             new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
             contractVal.toFixed(2),
@@ -183,18 +320,24 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
             excessVal.toFixed(2),
             `${contract.usedPercentage}%`,
             contract.status,
-          ].join(";")
+          ]
+            .map(escapeCsv)
+            .join(";")
         }
 
         return [
           contract.number,
           contract.company,
+          costBase,
+          itemsText,
           new Date(contract.startDate).toLocaleDateString("pt-BR"),
           new Date(contract.expirationDate).toLocaleDateString("pt-BR"),
           contractVal.toFixed(2),
           usedVal.toFixed(2),
           contract.status,
-        ].join(";")
+        ]
+          .map(escapeCsv)
+          .join(";")
       })
 
       const csvContent = [csvHeader, ...csvRows].join("\n")
@@ -203,9 +346,13 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = isExtrapolatedFilter
-        ? `relatorio-contratos-extrapolados-${new Date().toISOString().split("T")[0]}.csv`
-        : `relatorio-contratos-${new Date().toISOString().split("T")[0]}.csv`
+
+      let filePrefix = "relatorio-contratos"
+      if (isExtrapolatedFilter) filePrefix = "relatorio-contratos-extrapolados"
+      else if (isExpiredFilter) filePrefix = "relatorio-contratos-vencidos"
+      else if (filters?.status && filters.status !== "all") filePrefix = `relatorio-contratos-${filters.status}`
+
+      link.download = `${filePrefix}-${new Date().toISOString().split("T")[0]}.csv`
       link.click()
       URL.revokeObjectURL(url)
     }
