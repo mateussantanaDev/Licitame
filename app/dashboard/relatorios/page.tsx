@@ -13,7 +13,7 @@ import { useOrders } from "@/lib/orders-provider"
 import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
-import { getCanonicalCostBases } from "@/lib/cost-base-utils"
+import { getCanonicalCostBases, matchCostBase } from "@/lib/cost-base-utils"
 import {
   FileText,
   Download,
@@ -38,6 +38,107 @@ export default function RelatoriosPage() {
 
   // Obter bases de custo consolidadas e agrupadas a partir dos próprios contratos
   const canonicalCostBases = useMemo(() => getCanonicalCostBases(contracts), [contracts])
+
+  // Obter lista consolidada e única de fornecedores (cadastrados e vinculados a contratos)
+  const availableSuppliers = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; cnpj?: string; orderCount: number; contractCount: number }>()
+
+    const contractMap = new Map<string, { company: string; cnpj?: string }>()
+    contracts.forEach((c) => {
+      const comp = c.company?.trim()
+      if (comp) {
+        if (c.id) contractMap.set(c.id, { company: comp, cnpj: c.cnpj })
+        if (c.number) contractMap.set(c.number, { company: comp, cnpj: c.cnpj })
+      }
+    })
+
+    const orderCountByCompany = new Map<string, number>()
+    orders.forEach((o) => {
+      const info = contractMap.get(o.contractId) || contractMap.get(o.contractNumber)
+      if (info) {
+        const key = info.company.toLowerCase()
+        orderCountByCompany.set(key, (orderCountByCompany.get(key) || 0) + 1)
+      }
+    })
+
+    const contractCountByCompany = new Map<string, number>()
+    contracts.forEach((c) => {
+      const comp = c.company?.trim()
+      if (comp) {
+        const key = comp.toLowerCase()
+        contractCountByCompany.set(key, (contractCountByCompany.get(key) || 0) + 1)
+      }
+    })
+
+    // Do cadastro oficial de fornecedores
+    suppliers.forEach((s) => {
+      const name = s.name?.trim()
+      if (name) {
+        const key = name.toLowerCase()
+        const orderCount = orderCountByCompany.get(key) || 0
+        const contractCount = contractCountByCompany.get(key) || 0
+        map.set(key, { key: name, name, cnpj: s.cnpj, orderCount, contractCount })
+      }
+    })
+
+    // Dos contratos existentes
+    contracts.forEach((c) => {
+      const name = c.company?.trim()
+      if (name) {
+        const key = name.toLowerCase()
+        const orderCount = orderCountByCompany.get(key) || 0
+        const contractCount = contractCountByCompany.get(key) || 0
+        if (!map.has(key)) {
+          map.set(key, { key: name, name, cnpj: c.cnpj, orderCount, contractCount })
+        } else if (!map.get(key)!.cnpj && c.cnpj) {
+          map.get(key)!.cnpj = c.cnpj
+        }
+      }
+    })
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+  }, [suppliers, contracts, orders])
+
+  // Pré-visualização dinâmica dos pedidos conforme filtros aplicados
+  const previewOrders = useMemo(() => {
+    let list = [...orders]
+    if (filters.startDate) {
+      list = list.filter((o) => new Date(o.date) >= new Date(filters.startDate!))
+    }
+    if (filters.endDate) {
+      const end = new Date(filters.endDate!)
+      end.setHours(23, 59, 59, 999)
+      list = list.filter((o) => new Date(o.date) <= end)
+    }
+    if (filters.status && filters.status !== "all") {
+      list = list.filter((o) => o.status?.toLowerCase().trim() === filters.status!.toLowerCase().trim())
+    }
+    if (filters.supplier && filters.supplier !== "all") {
+      const target = filters.supplier.toLowerCase().trim()
+      const targetClean = target.replace(/\D/g, "")
+      list = list.filter((o) => {
+        const contract = contracts.find((c) => c.id === o.contractId || c.number === o.contractNumber)
+        if (!contract) return false
+        const comp = (contract.company || "").toLowerCase().trim()
+        const suppId = (contract.supplierId || "").toLowerCase().trim()
+        const cnpj = (contract.cnpj || "").replace(/\D/g, "")
+        return (
+          comp === target ||
+          suppId === target ||
+          comp.includes(target) ||
+          target.includes(comp) ||
+          (targetClean.length >= 8 && cnpj.includes(targetClean))
+        )
+      })
+    }
+    if (filters.costBase && filters.costBase !== "all") {
+      list = list.filter((o) => {
+        const contract = contracts.find((c) => c.id === o.contractId || c.number === o.contractNumber)
+        return matchCostBase(contract?.costBase || o.requestedByDepartment, filters.costBase!)
+      })
+    }
+    return list
+  }, [orders, contracts, filters])
 
   const handleGenerateReport = (type: "contracts" | "orders" | "suppliers" | "products" | "costbase") => {
     generateReport(type, format, filters)
@@ -168,10 +269,10 @@ export default function RelatoriosPage() {
           <Card>
             <CardHeader>
               <CardTitle>Relatório de Contratos</CardTitle>
-              <CardDescription>Gere relatórios detalhados de contratos</CardDescription>
+              <CardDescription>Gere relatórios executivos de contratos com controle de vigência e saldo</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="contractStatus">Status</Label>
                   <Select
@@ -211,6 +312,26 @@ export default function RelatoriosPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="contractSupplier">Fornecedor Contratado</Label>
+                  <Select
+                    value={filters.supplier || "all"}
+                    onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
+                  >
+                    <SelectTrigger id="contractSupplier">
+                      <SelectValue placeholder="Todos os fornecedores" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os fornecedores</SelectItem>
+                      {availableSuppliers.map((s) => (
+                        <SelectItem key={s.key} value={s.key}>
+                          {s.name} {s.contractCount > 0 ? `(${s.contractCount} contrato${s.contractCount !== 1 ? "s" : ""})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <Button onClick={() => handleGenerateReport("contracts")} className="w-full">
                 <Download className="mr-2 h-4 w-4" />
@@ -224,12 +345,34 @@ export default function RelatoriosPage() {
           <Card>
             <CardHeader>
               <CardTitle>Relatório de Pedidos</CardTitle>
-              <CardDescription>Gere relatórios detalhados de pedidos</CardDescription>
+              <CardDescription>
+                Gere relatórios executivos de pedidos com discriminação de itens, fornecedor contratado, secretaria e status
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
-                  <Label htmlFor="orderStatus">Status</Label>
+                  <Label htmlFor="orderSupplier">Fornecedor Contratado</Label>
+                  <Select
+                    value={filters.supplier || "all"}
+                    onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
+                  >
+                    <SelectTrigger id="orderSupplier">
+                      <SelectValue placeholder="Todos os fornecedores" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os fornecedores</SelectItem>
+                      {availableSuppliers.map((s) => (
+                        <SelectItem key={s.key} value={s.key}>
+                          {s.name} {s.orderCount > 0 ? `(${s.orderCount} pedido${s.orderCount !== 1 ? "s" : ""})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="orderStatus">Status do Pedido</Label>
                   <Select
                     value={filters.status || "all"}
                     onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? undefined : value })}
@@ -238,15 +381,54 @@ export default function RelatoriosPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
+                      <SelectItem value="all">Todos os status</SelectItem>
                       <SelectItem value="pendente">Pendente</SelectItem>
-                      <SelectItem value="em sepação">Em Sepação</SelectItem>
+                      <SelectItem value="em separação">Em Separação</SelectItem>
+                      <SelectItem value="realizado">Realizado</SelectItem>
+                      <SelectItem value="entregue">Entregue</SelectItem>
                       <SelectItem value="concluído">Concluído</SelectItem>
                       <SelectItem value="cancelado">Cancelado</SelectItem>
+                      <SelectItem value="rascunho">Rascunho</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="orderCostBase">Secretaria / Base de Custo</Label>
+                  <Select
+                    value={filters.costBase || "all"}
+                    onValueChange={(value) => setFilters({ ...filters, costBase: value === "all" ? undefined : value })}
+                  >
+                    <SelectTrigger id="orderCostBase">
+                      <SelectValue placeholder="Todas as secretarias / bases" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas as secretarias / bases</SelectItem>
+                      {canonicalCostBases.map((cb) => (
+                        <SelectItem key={cb.key} value={cb.key}>
+                          {cb.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  Pedidos filtrados: {previewOrders.length} {previewOrders.length === 1 ? "registro" : "registros"}
+                </span>
+                <span>
+                  Valor total correspondente:{" "}
+                  <strong className="text-foreground">
+                    R${" "}
+                    {previewOrders
+                      .reduce((sum, o) => sum + (o.totalValue || 0), 0)
+                      .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </strong>
+                </span>
+              </div>
+
               <Button onClick={() => handleGenerateReport("orders")} className="w-full">
                 <Download className="mr-2 h-4 w-4" />
                 Gerar Relatório de Pedidos

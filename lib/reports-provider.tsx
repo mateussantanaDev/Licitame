@@ -20,6 +20,7 @@ export type ReportFilter = {
   category?: string
   type?: string
   costBase?: string
+  supplier?: string
 }
 
 type ReportsContextType = {
@@ -137,6 +138,14 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       filteredContracts = filteredContracts.filter((c) =>
         matchCostBase(c.costBase, filters.costBase)
       )
+    }
+    if (filters?.supplier && filters.supplier !== "all") {
+      const target = filters.supplier.toLowerCase().trim()
+      filteredContracts = filteredContracts.filter((c) => {
+        const comp = (c.company || "").toLowerCase().trim()
+        const suppId = (c.supplierId || "").toLowerCase().trim()
+        return comp === target || suppId === target || comp.includes(target) || target.includes(comp)
+      })
     }
 
     const isExtrapolatedFilter = filters?.status === "extrapolado"
@@ -539,63 +548,413 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
   const generateOrdersReport = (format: ReportFormat, filters?: ReportFilter) => {
     let filteredOrders = [...orders]
 
+    // 1. Filtro por Data
     if (filters?.startDate) {
       filteredOrders = filteredOrders.filter((o) => new Date(o.date) >= new Date(filters.startDate!))
     }
     if (filters?.endDate) {
-      filteredOrders = filteredOrders.filter((o) => new Date(o.date) <= new Date(filters.endDate!))
+      const end = new Date(filters.endDate!)
+      end.setHours(23, 59, 59, 999)
+      filteredOrders = filteredOrders.filter((o) => new Date(o.date) <= end)
     }
-    if (filters?.status) {
-      filteredOrders = filteredOrders.filter((o) => o.status === filters.status)
+
+    // 2. Filtro por Status
+    if (filters?.status && filters.status !== "all") {
+      filteredOrders = filteredOrders.filter(
+        (o) => o.status?.toLowerCase().trim() === filters.status!.toLowerCase().trim()
+      )
     }
+
+    // 3. Filtro por Fornecedor (da empresa contratada vinculada ao pedido)
+    if (filters?.supplier && filters.supplier !== "all") {
+      const target = filters.supplier.toLowerCase().trim()
+      const targetClean = target.replace(/\D/g, "")
+
+      filteredOrders = filteredOrders.filter((order) => {
+        const contract = contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+        if (!contract) return false
+
+        const comp = (contract.company || "").toLowerCase().trim()
+        const suppId = (contract.supplierId || "").toLowerCase().trim()
+        const cnpj = (contract.cnpj || "").replace(/\D/g, "")
+
+        return (
+          comp === target ||
+          suppId === target ||
+          comp.includes(target) ||
+          target.includes(comp) ||
+          (targetClean.length >= 8 && cnpj.includes(targetClean))
+        )
+      })
+    }
+
+    // 4. Filtro por Secretaria / Base de Custo
+    if (filters?.costBase && filters.costBase !== "all") {
+      filteredOrders = filteredOrders.filter((order) => {
+        const contract = contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+        return matchCostBase(contract?.costBase || order.requestedByDepartment, filters.costBase!)
+      })
+    }
+
+    const now = new Date()
+
+    // Métricas Executivas para Gestão
+    const totalCount = filteredOrders.length
+    const totalValue = filteredOrders.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+
+    const concluidosList = filteredOrders.filter(
+      (o) => o.status === "concluído" || o.status === "entregue" || o.status === "realizado"
+    )
+    const concluidosCount = concluidosList.length
+    const concluidosVal = concluidosList.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+    const pctConcluidos = totalCount > 0 ? Math.round((concluidosCount / totalCount) * 100) : 0
+
+    const pendentesList = filteredOrders.filter(
+      (o) => o.status === "pendente" || o.status === "em separação" || o.status === "rascunho"
+    )
+    const pendentesCount = pendentesList.length
+    const pendentesVal = pendentesList.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+    const pctPendentes = totalCount > 0 ? Math.round((pendentesCount / totalCount) * 100) : 0
 
     if (format === "pdf") {
-      const doc = new jsPDF()
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
 
-      doc.setFontSize(18)
-      doc.text("Relatório de Pedidos", 14, 22)
+      // Barra superior decorativa executiva (Navy)
+      doc.setFillColor(15, 23, 42)
+      doc.rect(0, 0, 297, 3.5, "F")
 
-      doc.setFontSize(11)
-      doc.text(`Data de geração: ${new Date().toLocaleDateString("pt-BR")}`, 14, 32)
-      doc.text(`Total de pedidos: ${filteredOrders.length}`, 14, 38)
+      // Identidade do Sistema
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8)
+      doc.setTextColor(37, 99, 235)
+      doc.text("LICITAME  •  SISTEMA INTEGRADO DE GESTÃO ESTRATÉGICA DE PEDIDOS", 14, 11)
 
-      const tableData = filteredOrders.map((order) => [
-        order.number,
-        order.contractNumber,
-        new Date(order.date).toLocaleDateString("pt-BR"),
-        `R$ ${order.totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-        order.status,
-      ])
+      // Título do Relatório
+      let docTitle = "RELATÓRIO EXECUTIVO DE PEDIDOS DE FORNECIMENTO"
+      if (filters?.supplier && filters.supplier !== "all") {
+        docTitle = `RELATÓRIO DE PEDIDOS — FORNECEDOR: ${filters.supplier.toUpperCase()}`
+      } else if (filters?.status && filters.status !== "all") {
+        docTitle = `RELATÓRIO EXECUTIVO DE PEDIDOS (${filters.status.toUpperCase()})`
+      }
 
-      autoTable(doc, {
-        head: [["Número", "Contrato", "Data", "Valor Total", "Status"]],
-        body: tableData,
-        startY: 45,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [59, 130, 246] },
+      doc.setFontSize(14)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(15, 23, 42)
+      const docTitleDisplay = docTitle.length > 55 ? docTitle.substring(0, 52) + "..." : docTitle
+      doc.text(docTitleDisplay, 14, 18)
+
+      // Subtítulo Gerencial
+      doc.setFontSize(8.5)
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(100, 116, 139)
+      doc.text(
+        "Painel analítico para conferência de itens solicitados, fornecedores, contratos vinculados e status de entrega.",
+        14,
+        24
+      )
+
+      // Box de Metadados de Emissão (Canto Superior Direito)
+      doc.setFillColor(248, 250, 252)
+      doc.setDrawColor(203, 213, 225)
+      doc.roundedRect(217, 7, 66, 20, 2, 2, "FD")
+
+      doc.setFontSize(7)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(71, 85, 105)
+      doc.text("PARÂMETROS DE EMISSÃO", 221, 11.5)
+
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(6.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text(
+        `Data/Hora: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+        221,
+        15.5
+      )
+
+      const suppLabel = filters?.supplier && filters.supplier !== "all" ? filters.supplier : "Todos os Fornecedores"
+      const suppDisplay = suppLabel.length > 20 ? suppLabel.substring(0, 18) + "..." : suppLabel
+      doc.text(`Fornecedor: ${suppDisplay}`, 221, 19.5)
+
+      const statusLabel = filters?.status && filters.status !== "all" ? filters.status.toUpperCase() : "Todos os Status"
+      doc.text(`Status: ${statusLabel}`, 221, 23.5)
+
+      // 4 Cards de KPIs Executivos
+      drawKpiCard(
+        doc,
+        14,
+        30,
+        64,
+        17,
+        "Total de Pedidos",
+        `${totalCount} pedido${totalCount !== 1 ? "s" : ""}`,
+        `${concluidosCount} concluído(s) / ${pendentesCount} em aberto`,
+        [37, 99, 235]
+      )
+
+      drawKpiCard(
+        doc,
+        82,
+        30,
+        64,
+        17,
+        "Volume Financeiro Total",
+        `R$ ${totalValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        "Soma dos valores totais dos pedidos",
+        [15, 23, 42]
+      )
+
+      drawKpiCard(
+        doc,
+        150,
+        30,
+        64,
+        17,
+        "Concluídos / Entregues",
+        `R$ ${concluidosVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `${concluidosCount} pedido${concluidosCount !== 1 ? "s" : ""} (${pctConcluidos}% do volume)`,
+        [16, 185, 129]
+      )
+
+      drawKpiCard(
+        doc,
+        218,
+        30,
+        65,
+        17,
+        "Em Aberto / Pendentes",
+        `R$ ${pendentesVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `${pendentesCount} pedido${pendentesCount !== 1 ? "s" : ""} (${pctPendentes}% aguardando)`,
+        pendentesCount > 0 ? [217, 119, 6] : [100, 116, 139]
+      )
+
+      // Mapeamento dos Dados da Tabela Executiva
+      const tableRows = filteredOrders.map((order) => {
+        const contract = contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+
+        // Coluna 0: Identificação do Pedido & Data
+        const orderNum = order.number || "Sem nº"
+        const orderDate = order.date ? new Date(order.date).toLocaleDateString("pt-BR") : "-"
+        const deliveryDate = order.deliveryDate ? `Entrega: ${new Date(order.deliveryDate).toLocaleDateString("pt-BR")}` : ""
+        const col0 = deliveryDate ? `${orderNum}\nData: ${orderDate}\n${deliveryDate}` : `${orderNum}\nData: ${orderDate}`
+
+        // Coluna 1: Fornecedor Contratado / CNPJ
+        const supplierName = contract?.company || "Fornecedor não identificado"
+        const cnpj = contract?.cnpj ? `CNPJ: ${contract.cnpj}` : ""
+        const col1 = cnpj ? `${supplierName}\n${cnpj}` : supplierName
+
+        // Coluna 2: Contrato & Secretaria Demandante
+        const contractRef = order.contractNumber || contract?.number || "Sem contrato vinculado"
+        const sec = contract?.costBase || order.requestedByDepartment || "Geral / Não informada"
+        const col2 = `${contractRef}\nSecretaria: ${sec}`
+
+        // Coluna 3: Itens do Pedido (Produtos / Quantidade / Valores)
+        let col3 = "Nenhum item discriminado"
+        if (order.items && order.items.length > 0) {
+          col3 = order.items
+            .map((item) => {
+              const qty = item.quantity || 0
+              const unitPrice = item.unitPrice || 0
+              const itemTotal = item.totalPrice || qty * unitPrice
+              return `• ${item.name} (${qty} un) — R$ ${itemTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+            })
+            .join("\n")
+        }
+
+        // Coluna 4: Solicitante & Destino
+        const sol = order.requestedBy ? `Sol: ${order.requestedBy}` : "Sol: Não informado"
+        const dest = order.requestedFor ? `Para: ${order.requestedFor}` : order.requestedByDepartment ? `Depto: ${order.requestedByDepartment}` : ""
+        const col4 = dest ? `${sol}\n${dest}` : sol
+
+        // Coluna 5: Valor Total
+        const col5 = `R$ ${(order.totalValue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+
+        // Coluna 6: Status
+        const statusUpper = (order.status || "Pendente").toUpperCase()
+        const col6 = `[ ${statusUpper} ]`
+
+        return [col0, col1, col2, col3, col4, col5, col6]
       })
 
-      doc.save(`relatorio-pedidos-${new Date().toISOString().split("T")[0]}.pdf`)
-    } else if (format === "csv" || format === "excel") {
-      const csvContent = [
-        ["Número", "Contrato", "Data", "Valor Total", "Status", "Solicitante"].join(";"),
-        ...filteredOrders.map((order) =>
+      const bodyData = tableRows.length > 0
+        ? tableRows
+        : [["Nenhum pedido encontrado com os filtros selecionados.", "-", "-", "-", "-", "-", "-"]]
+
+      autoTable(doc, {
+        head: [
           [
-            order.number,
-            order.contractNumber,
-            new Date(order.date).toLocaleDateString("pt-BR"),
-            order.totalValue.toFixed(2),
-            order.status,
-            order.requestedBy,
-          ].join(";"),
-        ),
-      ].join("\n")
+            "Nº Pedido / Data",
+            "Fornecedor / CNPJ",
+            "Contrato / Secretaria",
+            "Itens do Pedido (Produtos, Qtd e Valor)",
+            "Solicitante / Destino",
+            "Valor Total",
+            "Status",
+          ],
+        ],
+        body: bodyData,
+        startY: 50,
+        margin: { top: 18, bottom: 16, left: 14, right: 14 },
+        styles: {
+          font: "helvetica",
+          fontSize: 7,
+          textColor: [30, 41, 59],
+          lineColor: [226, 232, 240],
+          lineWidth: 0.1,
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          overflow: "linebreak",
+          valign: "top",
+        },
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: "bold",
+          cellPadding: 2.5,
+        },
+        alternateRowStyles: {
+          fillColor: [248, 250, 252],
+        },
+        columnStyles: {
+          0: { cellWidth: 30, fontStyle: "bold", textColor: [15, 23, 42] },
+          1: { cellWidth: 48 },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 68 },
+          4: { cellWidth: 33 },
+          5: { cellWidth: 26, halign: "right", fontStyle: "bold", textColor: [15, 23, 42] },
+          6: { cellWidth: 24, halign: "center" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            if (data.column.index === 6) {
+              const txt = String(data.cell.raw || "").toUpperCase()
+              if (txt.includes("CONCLUÍDO") || txt.includes("ENTREGUE") || txt.includes("REALIZADO")) {
+                data.cell.styles.textColor = [16, 185, 129]
+                data.cell.styles.fontStyle = "bold"
+              } else if (txt.includes("PENDENTE") || txt.includes("SEPARAÇÃO") || txt.includes("SEPAÇÃO")) {
+                data.cell.styles.textColor = [217, 119, 6]
+                data.cell.styles.fontStyle = "bold"
+              } else if (txt.includes("CANCELADO")) {
+                data.cell.styles.textColor = [220, 38, 38]
+                data.cell.styles.fontStyle = "bold"
+              }
+            }
+          }
+        },
+      })
+
+      // Cabeçalho de Páginas Subsequentes e Rodapé em Todas as Páginas
+      const pageCount = (doc as any).internal.getNumberOfPages()
+      const emitDateStr = `${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+
+        // Cabeçalho a partir da página 2
+        if (i > 1) {
+          doc.setFontSize(7.5)
+          doc.setFont("helvetica", "bold")
+          doc.setTextColor(37, 99, 235)
+          doc.text("LICITAME", 14, 11)
+
+          doc.setFont("helvetica", "normal")
+          doc.setTextColor(100, 116, 139)
+          doc.text(` • ${docTitleDisplay}`, 28, 11)
+          doc.text(`Fornecedor: ${suppLabel} | Status: ${statusLabel}`, 283, 11, { align: "right" })
+
+          doc.setDrawColor(226, 232, 240)
+          doc.line(14, 13, 283, 13)
+        }
+
+        // Rodapé Oficial em todas as páginas
+        doc.setDrawColor(226, 232, 240)
+        doc.line(14, 199, 283, 199)
+
+        doc.setFontSize(7)
+        doc.setFont("helvetica", "normal")
+        doc.setTextColor(148, 163, 184)
+        doc.text(`Sistema Licitame • Emitido em ${emitDateStr}`, 14, 203.5)
+        doc.text("Documento Gerencial para Tomada de Decisão • Uso Reservado", 148, 203.5, { align: "center" })
+        doc.text(`Página ${i} de ${pageCount}`, 283, 203.5, { align: "right" })
+      }
+
+      let filePrefix = "relatorio-pedidos"
+      if (filters?.supplier && filters.supplier !== "all") {
+        const slug = filters.supplier.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-")
+        filePrefix = `relatorio-pedidos-${slug}`
+      } else if (filters?.status && filters.status !== "all") {
+        filePrefix = `relatorio-pedidos-${filters.status}`
+      }
+
+      doc.save(`${filePrefix}-${new Date().toISOString().split("T")[0]}.pdf`)
+    } else if (format === "csv" || format === "excel") {
+      const csvHeader = [
+        "Número do Pedido",
+        "Data do Pedido",
+        "Previsão de Entrega",
+        "Fornecedor Contratado",
+        "CNPJ",
+        "Contrato Vinculado",
+        "Secretaria / Órgão Demandante",
+        "Solicitante",
+        "Destino / Setor",
+        "Itens do Pedido",
+        "Quantidade de Itens",
+        "Valor Total (R$)",
+        "Status",
+      ]
+        .map(escapeCsv)
+        .join(";")
+
+      const csvRows = filteredOrders.map((order) => {
+        const contract = contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+        const supplierName = contract?.company || "Não identificado"
+        const cnpj = contract?.cnpj || "-"
+        const contractRef = order.contractNumber || contract?.number || "-"
+        const sec = contract?.costBase || order.requestedByDepartment || "-"
+        const orderDate = order.date ? new Date(order.date).toLocaleDateString("pt-BR") : "-"
+        const deliveryDate = order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("pt-BR") : "-"
+
+        const itemsSummary = order.items && order.items.length > 0
+          ? order.items.map((i) => `${i.quantity}x ${i.name} (R$ ${(i.totalPrice || i.quantity * i.unitPrice).toFixed(2)})`).join(" | ")
+          : "Nenhum item"
+        const itemsCount = order.items ? order.items.reduce((s, i) => s + (i.quantity || 0), 0) : 0
+
+        return [
+          order.number,
+          orderDate,
+          deliveryDate,
+          supplierName,
+          cnpj,
+          contractRef,
+          sec,
+          order.requestedBy || "-",
+          order.requestedFor || "-",
+          itemsSummary,
+          itemsCount,
+          (order.totalValue || 0).toFixed(2),
+          order.status,
+        ]
+          .map(escapeCsv)
+          .join(";")
+      })
+
+      const csvContent = [csvHeader, ...csvRows].join("\n")
 
       const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = `relatorio-pedidos-${new Date().toISOString().split("T")[0]}.csv`
+
+      let filePrefix = "relatorio-pedidos"
+      if (filters?.supplier && filters.supplier !== "all") {
+        const slug = filters.supplier.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-")
+        filePrefix = `relatorio-pedidos-${slug}`
+      } else if (filters?.status && filters.status !== "all") {
+        filePrefix = `relatorio-pedidos-${filters.status}`
+      }
+
+      link.download = `${filePrefix}-${new Date().toISOString().split("T")[0]}.csv`
       link.click()
       URL.revokeObjectURL(url)
     }
