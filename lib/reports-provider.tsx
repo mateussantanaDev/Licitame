@@ -6,6 +6,7 @@ import { useOrders, type Order } from "@/lib/orders-provider"
 import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
+import { matchCostBase, getCanonicalCostBases } from "./cost-base-utils"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 
@@ -136,8 +137,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       }
     }
     if (filters?.costBase && filters.costBase !== "all") {
-      filteredContracts = filteredContracts.filter(
-        (c) => (c.costBase || "").trim().toLowerCase() === filters.costBase!.trim().toLowerCase()
+      filteredContracts = filteredContracts.filter((c) =>
+        matchCostBase(c.costBase, filters.costBase)
       )
     }
 
@@ -210,8 +211,13 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       doc.setTextColor(100, 116, 139)
       doc.text(`Data/Hora: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`, 221, 15.5)
       doc.text(`Filtro Status: ${isExpiredFilter ? "Vencidos" : isExtrapolatedFilter ? "Extrapolados" : filters?.status ? filters.status.toUpperCase() : "Todos"}`, 221, 19.5)
-      const secFilterText = filters?.costBase ? (filters.costBase.length > 22 ? filters.costBase.substring(0, 20) + "..." : filters.costBase) : "Todas as Secretarias"
-      doc.text(`Secretaria: ${secFilterText}`, 221, 23.5)
+      let secFilterText = "Todas as Secretarias"
+      if (filters?.costBase && filters.costBase !== "all") {
+        const canonical = getCanonicalCostBases(contracts).find((b) => b.key === filters.costBase)
+        secFilterText = canonical ? canonical.label : filters.costBase
+      }
+      const secFilterDisplay = secFilterText.length > 22 ? secFilterText.substring(0, 20) + "..." : secFilterText
+      doc.text(`Secretaria: ${secFilterDisplay}`, 221, 23.5)
 
       // 4 Cards de KPIs Executivos
       drawKpiCard(
@@ -421,7 +427,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           doc.setFont("helvetica", "normal")
           doc.setTextColor(100, 116, 139)
           doc.text(` • ${docTitle}`, 28, 11)
-          doc.text(`Filtro: ${isExpiredFilter ? "Vencidos" : filters?.status || "Geral"} | Secretaria: ${filters?.costBase || "Todas"}`, 283, 11, { align: "right" })
+          doc.text(`Filtro: ${isExpiredFilter ? "Vencidos" : filters?.status || "Geral"} | Secretaria: ${secFilterText}`, 283, 11, { align: "right" })
 
           doc.setDrawColor(226, 232, 240)
           doc.line(14, 13, 283, 13)

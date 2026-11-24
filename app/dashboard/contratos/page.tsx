@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useContracts } from "@/lib/contracts-provider"
 import { useAuth } from "@/lib/auth-provider"
 import { formatCurrency, calculateDaysRemaining, calculateDaysExpired } from "@/lib/utils"
+import { getCanonicalCostBases, matchCostBase } from "@/lib/cost-base-utils"
 import { FileText, MoreHorizontal, Plus, Search, Upload, Download } from "lucide-react"
 import { ContractImportDialog } from "@/components/contract-import-dialog"
 import { useToast } from "@/hooks/use-toast"
@@ -43,8 +44,8 @@ export default function ContratosPage() {
     })
   }, [isLoading, contracts])
 
-  // Obter bases de custo únicas
-  const costBases = Array.from(new Set(contracts.map((c) => c.costBase)))
+  // Obter bases de custo consolidadas e agrupadas
+  const costBases = useMemo(() => getCanonicalCostBases(contracts), [contracts])
 
   // Filtrar contratos
   const filteredContracts = contracts.filter((contract) => {
@@ -54,7 +55,7 @@ export default function ContratosPage() {
       (contract.description?.toLowerCase() || "").includes(search.toLowerCase())
 
     const matchesStatus = statusFilter === "todos" || contract.status === statusFilter
-    const matchesBase = baseFilter === "todas" || contract.costBase === baseFilter
+    const matchesBase = baseFilter === "todas" || matchCostBase(contract.costBase, baseFilter)
 
     return matchesSearch && matchesStatus && matchesBase
   })
@@ -128,14 +129,14 @@ export default function ContratosPage() {
               </Select>
 
               <Select value={baseFilter} onValueChange={setBaseFilter}>
-                <SelectTrigger className="w-[180px]">
+                <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="Base de Custo" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todas">Todas as bases</SelectItem>
                   {costBases.map((base) => (
-                    <SelectItem key={base} value={base}>
-                      {base}
+                    <SelectItem key={base.key} value={base.key}>
+                      {base.label} ({base.count})
                     </SelectItem>
                   ))}
                 </SelectContent>

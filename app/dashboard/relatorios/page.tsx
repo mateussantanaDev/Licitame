@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -13,6 +13,7 @@ import { useOrders } from "@/lib/orders-provider"
 import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
+import { getCanonicalCostBases } from "@/lib/cost-base-utils"
 import {
   FileText,
   Download,
@@ -35,12 +36,8 @@ export default function RelatoriosPage() {
   const [format, setFormat] = useState<ReportFormat>("pdf")
   const [filters, setFilters] = useState<ReportFilter>({})
 
-  const uniqueCostBases = Array.from(
-    new Set([
-      ...contracts.map((c) => c.costBase).filter(Boolean),
-      ...costBases.map((cb) => cb.name).filter(Boolean),
-    ])
-  ).sort()
+  // Obter bases de custo consolidadas e agrupadas a partir dos próprios contratos
+  const canonicalCostBases = useMemo(() => getCanonicalCostBases(contracts), [contracts])
 
   const handleGenerateReport = (type: "contracts" | "orders" | "suppliers" | "products" | "costbase") => {
     generateReport(type, format, filters)
@@ -206,9 +203,9 @@ export default function RelatoriosPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todas as secretarias / bases</SelectItem>
-                      {uniqueCostBases.map((cb) => (
-                        <SelectItem key={cb} value={cb}>
-                          {cb}
+                      {canonicalCostBases.map((cb) => (
+                        <SelectItem key={cb.key} value={cb.key}>
+                          {cb.label} ({cb.count})
                         </SelectItem>
                       ))}
                     </SelectContent>
