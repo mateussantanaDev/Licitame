@@ -128,11 +128,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         filteredContracts = filteredContracts.filter(
           (c) => c.usedValue > c.value || c.items?.some((i) => i.usedQuantity > i.quantity)
         )
-      } else if (filters.status === "vencido") {
-        filteredContracts = filteredContracts.filter(
-          (c) => c.status === "vencido" || new Date(c.expirationDate) <= new Date()
-        )
       } else {
+        // Filtro estrito: traz apenas e exclusivamente contratos com o status solicitado (ex: apenas 'vencido')
         filteredContracts = filteredContracts.filter((c) => c.status === filters.status)
       }
     }
@@ -148,10 +145,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
     // Métricas Executivas para Gestão
     const totalCount = filteredContracts.length
-    const vencidosCount = filteredContracts.filter((c) => {
-      const exp = c.expirationDate ? new Date(c.expirationDate) : null
-      return c.status === "vencido" || (exp && exp <= now)
-    }).length
+    const vencidosCount = filteredContracts.filter((c) => c.status === "vencido").length
 
     const totalContractVal = filteredContracts.reduce((sum, c) => sum + (c.value || c.totalValue || 0), 0)
     const totalUsedVal = filteredContracts.reduce((sum, c) => sum + (c.usedValue || 0), 0)
@@ -226,9 +220,9 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         30,
         64,
         17,
-        "Contratos Analisados",
+        isExpiredFilter ? "Contratos Vencidos" : "Contratos Analisados",
         `${totalCount} contrato${totalCount !== 1 ? "s" : ""}`,
-        isExpiredFilter ? `${vencidosCount} com prazo de vigência expirado` : `${vencidosCount} com vigência expirada`,
+        isExpiredFilter ? "Exclusivamente contratos com status Vencido" : `${vencidosCount} com status vencido`,
         isExpiredFilter || vencidosCount > 0 ? [220, 38, 38] : [37, 99, 235]
       )
 
@@ -320,7 +314,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
         // Coluna 6: Situação e Ação de Gestão Recomendada
         const statusUpper = (contract.status || "Ativo").toUpperCase()
-        const isExp = contract.status === "vencido" || (expDate && expDate <= now)
+        const isExp = contract.status === "vencido"
         let rec = "Execução Normal"
         if (usedVal > contractVal) {
           rec = "Auditoria de Limite"
@@ -328,6 +322,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           rec = usedVal >= contractVal * 0.9 ? "Encerrar Contrato" : "Avaliar Prorrogação"
         } else if (contract.status === "cancelado") {
           rec = "Contrato Cancelado"
+        } else if (contract.status === "expirado") {
+          rec = "Contrato Expirado"
         }
         const col6 = `[ ${statusUpper} ]\n${rec}`
 
@@ -489,7 +485,7 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           diasLabel = `Restam ${days} dias`
         }
 
-        const isExp = contract.status === "vencido" || (expDate && expDate <= now)
+        const isExp = contract.status === "vencido"
         let rec = "Execução Normal"
         if (usedVal > contractVal) {
           rec = "Auditoria de Limite"
@@ -497,6 +493,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           rec = usedVal >= contractVal * 0.9 ? "Encerrar Contrato" : "Avaliar Prorrogação"
         } else if (contract.status === "cancelado") {
           rec = "Contrato Cancelado"
+        } else if (contract.status === "expirado") {
+          rec = "Contrato Expirado"
         }
 
         return [
