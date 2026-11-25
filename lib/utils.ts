@@ -60,6 +60,24 @@ export function formatCNPJ(value: string): string {
 }
 
 /**
+ * Formata um CNPJ (14 dígitos) ou CPF (11 dígitos) já completo para exibição.
+ * Retorna o valor original limpo caso não possua 11 ou 14 dígitos.
+ */
+export function formatCpfCnpj(value?: string | null): string {
+  if (!value) return ""
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  const digits = trimmed.replace(/\D/g, "")
+  if (digits.length === 14) {
+    return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
+  }
+  if (digits.length === 11) {
+    return digits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
+  }
+  return trimmed
+}
+
+/**
  * Valida um CNPJ
  * @param cnpj O CNPJ a ser validado (pode estar formatado ou apenas com dígitos)
  * @returns true se o CNPJ for válido, false caso contrário

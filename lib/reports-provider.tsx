@@ -7,6 +7,7 @@ import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
 import { matchCostBase, getCanonicalCostBases } from "./cost-base-utils"
+import { formatCpfCnpj } from "@/lib/utils"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 
@@ -74,6 +75,52 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
     if (val === null || val === undefined) return '""'
     const str = String(val).replace(/"/g, '""')
     return `"${str}"`
+  }
+
+  /**
+   * Resolve razão social e CNPJ formatado com fallback no cadastro de fornecedores.
+   */
+  const resolveSupplierDetails = (
+    companyName?: string,
+    contractCnpj?: string,
+    supplierId?: string
+  ): { name: string; cnpj: string; formattedDisplay: string } => {
+    const rawName = companyName?.trim() || "Fornecedor não identificado"
+    let rawCnpj = contractCnpj?.trim() || ""
+
+    if (!rawCnpj && supplierId) {
+      const foundById = suppliers.find((s) => s.id === supplierId)
+      if (foundById?.cnpj) rawCnpj = foundById.cnpj.trim()
+    }
+
+    if (!rawCnpj && companyName) {
+      const cleanComp = companyName.toLowerCase().trim()
+      const cleanCompNoSuffix = cleanComp.replace(/\b(ltda|eireli|s\/a|sa|me|epp)\b/gi, "").trim()
+      const foundByName = suppliers.find((s) => {
+        const sName = s.name?.toLowerCase().trim() || ""
+        const sNameNoSuffix = sName.replace(/\b(ltda|eireli|s\/a|sa|me|epp)\b/gi, "").trim()
+        return (
+          sName === cleanComp ||
+          (cleanCompNoSuffix && sNameNoSuffix === cleanCompNoSuffix) ||
+          (sName && cleanComp.includes(sName)) ||
+          (cleanComp && sName.includes(cleanComp))
+        )
+      })
+      if (foundByName?.cnpj) rawCnpj = foundByName.cnpj.trim()
+    }
+
+    if (!rawCnpj && companyName) {
+      const match = companyName.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/)
+      if (match) rawCnpj = match[0]
+    }
+
+    const formattedCnpj = formatCpfCnpj(rawCnpj)
+    const cnpjLine = formattedCnpj ? `CNPJ: ${formattedCnpj}` : "CNPJ: Não informado"
+    return {
+      name: rawName,
+      cnpj: formattedCnpj,
+      formattedDisplay: `${rawName}\n${cnpjLine}`,
+    }
   }
 
   const drawKpiCard = (
@@ -289,9 +336,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         else if (preg) col0Lines.push(preg)
 
         // Coluna 1: Empresa Fornecedora / CNPJ
-        const comp = contract.company || "Não informada"
-        const cnpj = contract.cnpj ? `CNPJ: ${contract.cnpj}` : ""
-        const col1 = cnpj ? `${comp}\n${cnpj}` : comp
+        const suppDetails = resolveSupplierDetails(contract.company, contract.cnpj, contract.supplierId)
+        const col1 = suppDetails.formattedDisplay
 
         // Coluna 2: Secretaria / Órgão Demandante
         const sec = contract.costBase || contract.contractingParty || "Geral / Não informada"
@@ -506,11 +552,13 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
           rec = "Contrato Expirado"
         }
 
+        const suppCsv = resolveSupplierDetails(contract.company, contract.cnpj, contract.supplierId)
+
         return [
           contract.number,
           contract.administrativeProcess || contract.electronicAuction || "-",
-          contract.company,
-          contract.cnpj || "-",
+          suppCsv.name,
+          suppCsv.cnpj || "Não informado",
           costBase,
           objeto,
           contract.startDate ? new Date(contract.startDate).toLocaleDateString("pt-BR") : "-",
@@ -631,8 +679,17 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
       // Título do Relatório
       let docTitle = "RELATÓRIO EXECUTIVO DE PEDIDOS DE FORNECIMENTO"
-      if (filters?.supplier && filters.supplier !== "all") {
-        docTitle = `RELATÓRIO DE PEDIDOS — FORNECEDOR: ${filters.supplier.toUpperCase()}`
+      const filteredSuppContract =
+        filters?.supplier && filters.supplier !== "all"
+          ? contracts.find((c) => c.company?.toLowerCase().trim() === filters.supplier!.toLowerCase().trim())
+          : undefined
+      const filteredSuppDetails =
+        filters?.supplier && filters.supplier !== "all"
+          ? resolveSupplierDetails(filters.supplier, filteredSuppContract?.cnpj, filteredSuppContract?.supplierId)
+          : undefined
+
+      if (filteredSuppDetails) {
+        docTitle = `RELATÓRIO DE PEDIDOS — FORNECEDOR: ${filteredSuppDetails.name.toUpperCase()}`
       } else if (filters?.status && filters.status !== "all") {
         docTitle = `RELATÓRIO EXECUTIVO DE PEDIDOS (${filters.status.toUpperCase()})`
       }
@@ -643,25 +700,41 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       const docTitleDisplay = docTitle.length > 55 ? docTitle.substring(0, 52) + "..." : docTitle
       doc.text(docTitleDisplay, 14, 18)
 
-      // Subtítulo Gerencial
+      // Subtítulo Gerencial (com CNPJ abaixo do nome do fornecedor quando filtrado)
       doc.setFontSize(8.5)
       doc.setFont("helvetica", "normal")
       doc.setTextColor(100, 116, 139)
-      doc.text(
-        "Painel analítico para conferência de itens solicitados, fornecedores, contratos vinculados e status de entrega.",
-        14,
-        24
-      )
+      if (filteredSuppDetails) {
+        doc.setFont("helvetica", "bold")
+        doc.text(
+          `CNPJ: ${filteredSuppDetails.cnpj || "Não informado"}`,
+          14,
+          23
+        )
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(7.5)
+        doc.text(
+          "Painel analítico para conferência de itens solicitados, contratos vinculados e status de entrega.",
+          14,
+          27.5
+        )
+      } else {
+        doc.text(
+          "Painel analítico para conferência de itens solicitados, fornecedores, contratos vinculados e status de entrega.",
+          14,
+          24
+        )
+      }
 
       // Box de Metadados de Emissão (Canto Superior Direito)
       doc.setFillColor(248, 250, 252)
       doc.setDrawColor(203, 213, 225)
-      doc.roundedRect(217, 7, 66, 20, 2, 2, "FD")
+      doc.roundedRect(217, 6, 66, 21.5, 2, 2, "FD")
 
       doc.setFontSize(7)
       doc.setFont("helvetica", "bold")
       doc.setTextColor(71, 85, 105)
-      doc.text("PARÂMETROS DE EMISSÃO", 221, 11.5)
+      doc.text("PARÂMETROS DE EMISSÃO", 221, 10.5)
 
       doc.setFont("helvetica", "normal")
       doc.setFontSize(6.5)
@@ -669,15 +742,20 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       doc.text(
         `Data/Hora: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
         221,
-        15.5
+        14.2
       )
 
-      const suppLabel = filters?.supplier && filters.supplier !== "all" ? filters.supplier : "Todos os Fornecedores"
+      const suppLabel = filteredSuppDetails ? filteredSuppDetails.name : "Todos os Fornecedores"
       const suppDisplay = suppLabel.length > 20 ? suppLabel.substring(0, 18) + "..." : suppLabel
-      doc.text(`Fornecedor: ${suppDisplay}`, 221, 19.5)
+      doc.text(`Fornecedor: ${suppDisplay}`, 221, 17.7)
 
       const statusLabel = filters?.status && filters.status !== "all" ? filters.status.toUpperCase() : "Todos os Status"
-      doc.text(`Status: ${statusLabel}`, 221, 23.5)
+      if (filteredSuppDetails) {
+        doc.text(`CNPJ: ${filteredSuppDetails.cnpj || "Não informado"}`, 221, 21.2)
+        doc.text(`Status: ${statusLabel}`, 221, 24.7)
+      } else {
+        doc.text(`Status: ${statusLabel}`, 221, 21.5)
+      }
 
       // 4 Cards de KPIs Executivos
       drawKpiCard(
@@ -739,9 +817,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
         const col0 = deliveryDate ? `${orderNum}\nData: ${orderDate}\n${deliveryDate}` : `${orderNum}\nData: ${orderDate}`
 
         // Coluna 1: Fornecedor Contratado / CNPJ
-        const supplierName = contract?.company || "Fornecedor não identificado"
-        const cnpj = contract?.cnpj ? `CNPJ: ${contract.cnpj}` : ""
-        const col1 = cnpj ? `${supplierName}\n${cnpj}` : supplierName
+        const suppDetails = resolveSupplierDetails(contract?.company, contract?.cnpj, contract?.supplierId)
+        const col1 = suppDetails.formattedDisplay
 
         // Coluna 2: Contrato & Secretaria Demandante
         const contractRef = order.contractNumber || contract?.number || "Sem contrato vinculado"
@@ -908,8 +985,9 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
 
       const csvRows = filteredOrders.map((order) => {
         const contract = contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
-        const supplierName = contract?.company || "Não identificado"
-        const cnpj = contract?.cnpj || "-"
+        const suppCsv = resolveSupplierDetails(contract?.company, contract?.cnpj, contract?.supplierId)
+        const supplierName = suppCsv.name
+        const cnpj = suppCsv.cnpj || "Não informado"
         const contractRef = order.contractNumber || contract?.number || "-"
         const sec = contract?.costBase || order.requestedByDepartment || "-"
         const orderDate = order.date ? new Date(order.date).toLocaleDateString("pt-BR") : "-"
@@ -1165,7 +1243,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
       doc.text(`Pedido Nº: ${order.number} | Contrato Nº: ${contract.number}`, 14, 34)
       doc.text(`Solicitante: ${order.requestedBy || "Não informado"} (${order.requestedByDepartment || "Geral"})`, 14, 40)
-      doc.text(`Empresa Contratada: ${contract.company}`, 14, 46)
+      const suppOrderExt = resolveSupplierDetails(contract.company, contract.cnpj, contract.supplierId)
+      doc.text(`Empresa Contratada: ${suppOrderExt.name} | CNPJ: ${suppOrderExt.cnpj || "Não informado"}`, 14, 46)
 
       const tableData: any[] = []
       let totalExceededQty = 0
@@ -1269,7 +1348,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       doc.setFontSize(10)
       doc.setTextColor(60, 60, 60)
       doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
-      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${contract.company}`, 14, 34)
+      const suppContractInfo = resolveSupplierDetails(contract.company, contract.cnpj, contract.supplierId)
+      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${suppContractInfo.name} | CNPJ: ${suppContractInfo.cnpj || "Não informado"}`, 14, 34)
       doc.text(`Valor Total Contratado: R$ ${contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, 40)
       doc.text(`Valor Total Consumido: R$ ${contract.usedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${contract.usedPercentage}%)`, 14, 46)
 
@@ -1438,7 +1518,8 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
       doc.setFontSize(9)
       doc.setTextColor(60, 60, 60)
       doc.text(`Data de Emissão: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")}`, 14, 28)
-      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${contract.company}`, 14, 34)
+      const suppContractInfo = resolveSupplierDetails(contract.company, contract.cnpj, contract.supplierId)
+      doc.text(`Contrato Nº: ${contract.number} | Empresa: ${suppContractInfo.name} | CNPJ: ${suppContractInfo.cnpj || "Não informado"}`, 14, 34)
       doc.text(`Valor Total Contratado: R$ ${contract.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, 14, 40)
       doc.text(`Valor Total Consumido: R$ ${contract.usedValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} (${contract.usedPercentage}%)`, 14, 46)
 

@@ -14,6 +14,7 @@ import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
 import { getCanonicalCostBases, matchCostBase } from "@/lib/cost-base-utils"
+import { formatCpfCnpj } from "@/lib/utils"
 import {
   FileText,
   Download,
@@ -77,27 +78,38 @@ export default function RelatoriosPage() {
         const key = name.toLowerCase()
         const orderCount = orderCountByCompany.get(key) || 0
         const contractCount = contractCountByCompany.get(key) || 0
-        map.set(key, { key: name, name, cnpj: s.cnpj, orderCount, contractCount })
+        map.set(key, { key: name, name, cnpj: formatCpfCnpj(s.cnpj), orderCount, contractCount })
       }
     })
 
-    // Dos contratos existentes
+    // Dos contratos existentes (com fallback de CNPJ pelo cadastro oficial)
     contracts.forEach((c) => {
       const name = c.company?.trim()
       if (name) {
         const key = name.toLowerCase()
         const orderCount = orderCountByCompany.get(key) || 0
         const contractCount = contractCountByCompany.get(key) || 0
+        let rawCnpj = c.cnpj?.trim() || ""
+        if (!rawCnpj && c.supplierId) {
+          rawCnpj = suppliers.find((s) => s.id === c.supplierId)?.cnpj || ""
+        }
+        const formattedCnpj = formatCpfCnpj(rawCnpj)
         if (!map.has(key)) {
-          map.set(key, { key: name, name, cnpj: c.cnpj, orderCount, contractCount })
-        } else if (!map.get(key)!.cnpj && c.cnpj) {
-          map.get(key)!.cnpj = c.cnpj
+          map.set(key, { key: name, name, cnpj: formattedCnpj, orderCount, contractCount })
+        } else if (!map.get(key)!.cnpj && formattedCnpj) {
+          map.get(key)!.cnpj = formattedCnpj
         }
       }
     })
 
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
   }, [suppliers, contracts, orders])
+
+  const selectedSupplierInfo = useMemo(() => {
+    if (!filters.supplier || filters.supplier === "all") return undefined
+    const target = filters.supplier.toLowerCase().trim()
+    return availableSuppliers.find((s) => s.key.toLowerCase().trim() === target)
+  }, [availableSuppliers, filters.supplier])
 
   // Pré-visualização dinâmica dos pedidos conforme filtros aplicados
   const previewOrders = useMemo(() => {
@@ -319,18 +331,34 @@ export default function RelatoriosPage() {
                     value={filters.supplier || "all"}
                     onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
                   >
-                    <SelectTrigger id="contractSupplier">
+                    <SelectTrigger id="contractSupplier" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
                       <SelectValue placeholder="Todos os fornecedores" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos os fornecedores</SelectItem>
                       {availableSuppliers.map((s) => (
                         <SelectItem key={s.key} value={s.key}>
-                          {s.name} {s.contractCount > 0 ? `(${s.contractCount} contrato${s.contractCount !== 1 ? "s" : ""})` : ""}
+                          <div className="flex flex-col text-left leading-tight py-0.5">
+                            <span className="font-medium text-foreground">
+                              {s.name}{" "}
+                              {s.contractCount > 0 ? `(${s.contractCount} contrato${s.contractCount !== 1 ? "s" : ""})` : ""}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
+                            </span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedSupplierInfo && (
+                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
+                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <Button onClick={() => handleGenerateReport("contracts")} className="w-full">
@@ -357,18 +385,34 @@ export default function RelatoriosPage() {
                     value={filters.supplier || "all"}
                     onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
                   >
-                    <SelectTrigger id="orderSupplier">
+                    <SelectTrigger id="orderSupplier" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
                       <SelectValue placeholder="Todos os fornecedores" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos os fornecedores</SelectItem>
                       {availableSuppliers.map((s) => (
                         <SelectItem key={s.key} value={s.key}>
-                          {s.name} {s.orderCount > 0 ? `(${s.orderCount} pedido${s.orderCount !== 1 ? "s" : ""})` : ""}
+                          <div className="flex flex-col text-left leading-tight py-0.5">
+                            <span className="font-medium text-foreground">
+                              {s.name}{" "}
+                              {s.orderCount > 0 ? `(${s.orderCount} pedido${s.orderCount !== 1 ? "s" : ""})` : ""}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
+                            </span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedSupplierInfo && (
+                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
+                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">

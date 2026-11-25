@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Eye, FileText, Filter, Plus, Search, SlidersHorizontal, Printer } from "lucide-react"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatCpfCnpj } from "@/lib/utils"
 
 // Tipos bem definidos
 type OrderStatus = "rascunho" | "pendente" | "aprovado" | "rejeitado" | "entregue"
@@ -87,8 +87,26 @@ const enrichOrder = (
   contracts: Contract[],
   suppliers: Supplier[]
 ): EnrichedOrder => {
-  const contract = contracts.find((c) => c.id === order.contractId) ?? createEmptyContract(order.contractId || "unknown")
-  const supplier = suppliers.find((s) => s.id === contract.supplierId) ?? createEmptySupplier(contract.supplierId || "unknown")
+  const contract =
+    contracts.find((c) => c.id === order.contractId || c.number === order.contractNumber) ??
+    createEmptyContract(order.contractId || "unknown")
+
+  const matchedSupplier =
+    suppliers.find((s) => contract.supplierId && s.id === contract.supplierId) ??
+    suppliers.find(
+      (s) => contract.company && s.name?.toLowerCase().trim() === contract.company.toLowerCase().trim()
+    )
+
+  const supplierName = matchedSupplier?.name || contract.company || "Fornecedor não encontrado"
+  const supplierCnpj = formatCpfCnpj(matchedSupplier?.cnpj || contract.cnpj)
+
+  const supplier: Supplier = matchedSupplier
+    ? { ...matchedSupplier, cnpj: supplierCnpj }
+    : {
+        ...createEmptySupplier(contract.supplierId || "unknown"),
+        name: supplierName,
+        cnpj: supplierCnpj,
+      }
 
   return {
     id: order.id,
@@ -260,7 +278,12 @@ export default function PedidosPage() {
                       <TableCell className="font-medium">{order.number}</TableCell>
                       <TableCell>{formatDate(order.date)}</TableCell>
                       <TableCell>{order.contract.number}</TableCell>
-                      <TableCell>{order.supplier.name}</TableCell>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{order.supplier.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {order.supplier.cnpj ? `CNPJ: ${order.supplier.cnpj}` : "CNPJ não informado"}
+                        </div>
+                      </TableCell>
                       <TableCell>{formatCurrency(order.totalValue)}</TableCell>
                       <TableCell>
                         <Badge variant={getStatusBadgeVariant(order.status)}>

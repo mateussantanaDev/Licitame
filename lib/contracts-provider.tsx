@@ -252,7 +252,16 @@ const transformFirebaseContract = (data: any): Contract => {
     updatedAt: data.updatedAt || new Date().toISOString(),
     administrativeProcess: data.processo_administrativo || data.administrativeProcess || "",
     electronicAuction: data.pregao_eletronico || data.electronicAuction || "",
-    cnpj: data.fornecedor?.cnpj || data.cnpj || "",
+    cnpj:
+      data.fornecedor?.cnpj ||
+      data.fornecedor?.cpf_cnpj ||
+      data.fornecedor?.documento ||
+      data.fornecedor_cnpj ||
+      data.cnpj_fornecedor ||
+      data.cnpj ||
+      data.cpf_cnpj ||
+      data.documento ||
+      "",
     contractingParty: data.contratante || data.contractingParty || "",
     totalValue: totalValue,
     signatureDate: data.data_assinatura || data.signatureDate || "",
