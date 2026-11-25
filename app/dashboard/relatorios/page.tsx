@@ -111,8 +111,8 @@ export default function RelatoriosPage() {
     return availableSuppliers.find((s) => s.key.toLowerCase().trim() === target)
   }, [availableSuppliers, filters.supplier])
 
-  // Pré-visualização dinâmica dos pedidos conforme filtros aplicados
-  const previewOrders = useMemo(() => {
+  // Pré-visualização dinâmica dos pedidos para a aba Pedidos e Dossiê Individual do Fornecedor
+  const filterOrdersBySupplierAndPeriod = (ignoreCostBase: boolean) => {
     let list = [...orders]
     if (filters.startDate) {
       list = list.filter((o) => new Date(o.date) >= new Date(filters.startDate!))
@@ -122,8 +122,9 @@ export default function RelatoriosPage() {
       end.setHours(23, 59, 59, 999)
       list = list.filter((o) => new Date(o.date) <= end)
     }
-    if (filters.status && filters.status !== "all") {
-      list = list.filter((o) => o.status?.toLowerCase().trim() === filters.status!.toLowerCase().trim())
+    const statusClean = filters.status?.toLowerCase().trim()
+    if (statusClean && !["all", "ativo", "inativo"].includes(statusClean)) {
+      list = list.filter((o) => o.status?.toLowerCase().trim() === statusClean)
     }
     if (filters.supplier && filters.supplier !== "all") {
       const target = filters.supplier.toLowerCase().trim()
@@ -137,20 +138,22 @@ export default function RelatoriosPage() {
         return (
           comp === target ||
           suppId === target ||
-          comp.includes(target) ||
-          target.includes(comp) ||
+          (comp && (comp.includes(target) || target.includes(comp))) ||
           (targetClean.length >= 8 && cnpj.includes(targetClean))
         )
       })
     }
-    if (filters.costBase && filters.costBase !== "all") {
+    if (!ignoreCostBase && filters.costBase && filters.costBase !== "all") {
       list = list.filter((o) => {
         const contract = contracts.find((c) => c.id === o.contractId || c.number === o.contractNumber)
         return matchCostBase(contract?.costBase || o.requestedByDepartment, filters.costBase!)
       })
     }
     return list
-  }, [orders, contracts, filters])
+  }
+
+  const previewOrders = useMemo(() => filterOrdersBySupplierAndPeriod(false), [orders, contracts, filters])
+  const previewSupplierOrders = useMemo(() => filterOrdersBySupplierAndPeriod(true), [orders, contracts, filters])
 
   const handleGenerateReport = (type: "contracts" | "orders" | "suppliers" | "products" | "costbase") => {
     generateReport(type, format, filters)
@@ -485,30 +488,127 @@ export default function RelatoriosPage() {
           <Card>
             <CardHeader>
               <CardTitle>Relatório de Fornecedores</CardTitle>
-              <CardDescription>Gere relatórios detalhados de fornecedores</CardDescription>
+              <CardDescription>
+                Gere o relatório geral consolidado ou escolha um fornecedor específico para visualizar o dossiê individual com todos os contratos e pedidos feitos
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="supplierStatus">Status</Label>
+                  <Label htmlFor="supplierSelect">Fornecedor (Individual ou Todos)</Label>
                   <Select
-                    value={filters.status || "all"}
-                    onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? undefined : value })}
+                    value={filters.supplier || "all"}
+                    onValueChange={(value) => {
+                      const nextSupplier = value === "all" ? undefined : value
+                      const cleanedStatus =
+                        nextSupplier && (filters.status === "ativo" || filters.status === "inativo")
+                          ? undefined
+                          : !nextSupplier &&
+                              filters.status &&
+                              !["ativo", "inativo"].includes(filters.status)
+                            ? undefined
+                            : filters.status
+                      setFilters({ ...filters, supplier: nextSupplier, status: cleanedStatus })
+                    }}
                   >
-                    <SelectTrigger id="supplierStatus">
-                      <SelectValue />
+                    <SelectTrigger id="supplierSelect" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
+                      <SelectValue placeholder="Todos os fornecedores (Relatório Geral)" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Todos</SelectItem>
-                      <SelectItem value="ativo">Ativo</SelectItem>
-                      <SelectItem value="inativo">Inativo</SelectItem>
+                      <SelectItem value="all">Todos os fornecedores (Relatório Geral)</SelectItem>
+                      {availableSuppliers.map((s) => (
+                        <SelectItem key={s.key} value={s.key}>
+                          <div className="flex flex-col text-left leading-tight py-0.5">
+                            <span className="font-medium text-foreground">
+                              {s.name} ({s.contractCount} contr. / {s.orderCount} ped.)
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  {selectedSupplierInfo && (
+                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
+                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
+                      </div>
+                    </div>
+                  )}
                 </div>
+
+                {selectedSupplierInfo ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="supplierOrderStatus">Status dos Pedidos do Fornecedor</Label>
+                    <Select
+                      value={
+                        filters.status && !["ativo", "inativo"].includes(filters.status)
+                          ? filters.status
+                          : "all"
+                      }
+                      onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? undefined : value })}
+                    >
+                      <SelectTrigger id="supplierOrderStatus">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos os pedidos</SelectItem>
+                        <SelectItem value="pendente">Pendente</SelectItem>
+                        <SelectItem value="em separação">Em Separação</SelectItem>
+                        <SelectItem value="realizado">Realizado</SelectItem>
+                        <SelectItem value="entregue">Entregue</SelectItem>
+                        <SelectItem value="concluído">Concluído</SelectItem>
+                        <SelectItem value="cancelado">Cancelado</SelectItem>
+                        <SelectItem value="rascunho">Rascunho</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="supplierStatus">Status do Fornecedor</Label>
+                    <Select
+                      value={filters.status === "ativo" || filters.status === "inativo" ? filters.status : "all"}
+                      onValueChange={(value) => setFilters({ ...filters, status: value === "all" ? undefined : value })}
+                    >
+                      <SelectTrigger id="supplierStatus">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        <SelectItem value="ativo">Ativo</SelectItem>
+                        <SelectItem value="inativo">Inativo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
+
+              {selectedSupplierInfo && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-4 py-2.5 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    Dossiê Individual: {selectedSupplierInfo.contractCount} contrato(s) • {previewSupplierOrders.length}{" "}
+                    {previewSupplierOrders.length === 1 ? "pedido encontrado" : "pedidos encontrados"}
+                  </span>
+                  <span>
+                    Volume em pedidos:{" "}
+                    <strong className="text-foreground">
+                      R${" "}
+                      {previewSupplierOrders
+                        .reduce((sum, o) => sum + (o.totalValue || 0), 0)
+                        .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </strong>
+                  </span>
+                </div>
+              )}
+
               <Button onClick={() => handleGenerateReport("suppliers")} className="w-full">
                 <Download className="mr-2 h-4 w-4" />
-                Gerar Relatório de Fornecedores
+                {selectedSupplierInfo
+                  ? "Gerar Relatório Individual do Fornecedor"
+                  : "Gerar Relatório Geral de Fornecedores"}
               </Button>
             </CardContent>
           </Card>

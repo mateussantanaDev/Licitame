@@ -1039,61 +1039,776 @@ export function ReportsProvider({ children }: { children: ReactNode }) {
   }
 
   const generateSuppliersReport = (format: ReportFormat, filters?: ReportFilter) => {
-    let filteredSuppliers = [...suppliers]
+    const now = new Date()
 
-    if (filters?.status) {
+    const applyLandscapeChrome = (
+      doc: jsPDF,
+      headerTitle: string,
+      rightFilterText: string
+    ) => {
+      const pageCount = (doc as any).internal.getNumberOfPages()
+      const emitDateStr = `${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`
+
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        if (i > 1) {
+          doc.setFontSize(7.5)
+          doc.setFont("helvetica", "bold")
+          doc.setTextColor(37, 99, 235)
+          doc.text("LICITAME", 14, 11)
+
+          doc.setFont("helvetica", "normal")
+          doc.setTextColor(100, 116, 139)
+          const truncatedTitle = headerTitle.length > 65 ? headerTitle.substring(0, 62) + "..." : headerTitle
+          doc.text(` • ${truncatedTitle}`, 28, 11)
+          doc.text(rightFilterText, 283, 11, { align: "right" })
+
+          doc.setDrawColor(226, 232, 240)
+          doc.line(14, 13, 283, 13)
+        }
+
+        doc.setDrawColor(226, 232, 240)
+        doc.line(14, 199, 283, 199)
+
+        doc.setFontSize(7)
+        doc.setFont("helvetica", "normal")
+        doc.setTextColor(148, 163, 184)
+        doc.text(`Sistema Licitame • Emitido em ${emitDateStr}`, 14, 203.5)
+        doc.text("Documento Gerencial para Tomada de Decisão • Uso Reservado", 148, 203.5, { align: "center" })
+        doc.text(`Página ${i} de ${pageCount}`, 283, 203.5, { align: "right" })
+      }
+    }
+
+    // MODO A: RELATÓRIO INDIVIDUAL DO FORNECEDOR (Dossiê completo com contratos e todos os pedidos feitos)
+    if (filters?.supplier && filters.supplier !== "all") {
+      const target = filters.supplier.toLowerCase().trim()
+      const targetClean = target.replace(/\D/g, "")
+
+      const matchedSupplier = suppliers.find((s) => {
+        const sName = (s.name || "").toLowerCase().trim()
+        const sCnpj = (s.cnpj || "").replace(/\D/g, "")
+        return (
+          s.id.toLowerCase() === target ||
+          sName === target ||
+          (sName && (sName.includes(target) || target.includes(sName))) ||
+          (targetClean.length >= 8 && sCnpj.includes(targetClean))
+        )
+      })
+
+      const supplierContracts = contracts.filter((c) => {
+        const comp = (c.company || "").toLowerCase().trim()
+        const suppId = (c.supplierId || "").toLowerCase().trim()
+        const cnpj = (c.cnpj || "").replace(/\D/g, "")
+        if (matchedSupplier && suppId && suppId === matchedSupplier.id.toLowerCase()) return true
+        return (
+          comp === target ||
+          (comp && (comp.includes(target) || target.includes(comp))) ||
+          (targetClean.length >= 8 && cnpj.includes(targetClean))
+        )
+      })
+
+      const contractIds = new Set(supplierContracts.map((c) => c.id).filter(Boolean))
+      const contractNumbers = new Set(supplierContracts.map((c) => c.number).filter(Boolean))
+
+      let supplierOrders = orders.filter(
+        (o) => (o.contractId && contractIds.has(o.contractId)) || (o.contractNumber && contractNumbers.has(o.contractNumber))
+      )
+
+      if (filters?.startDate) {
+        supplierOrders = supplierOrders.filter((o) => new Date(o.date) >= new Date(filters.startDate!))
+      }
+      if (filters?.endDate) {
+        const end = new Date(filters.endDate!)
+        end.setHours(23, 59, 59, 999)
+        supplierOrders = supplierOrders.filter((o) => new Date(o.date) <= end)
+      }
+      const orderStatusFilter = filters?.status?.toLowerCase().trim()
+      if (orderStatusFilter && !["all", "ativo", "inativo"].includes(orderStatusFilter)) {
+        supplierOrders = supplierOrders.filter((o) => o.status?.toLowerCase().trim() === orderStatusFilter)
+      }
+
+      supplierOrders.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+      const suppDetails = resolveSupplierDetails(
+        matchedSupplier?.name || supplierContracts[0]?.company || filters.supplier,
+        matchedSupplier?.cnpj || supplierContracts[0]?.cnpj,
+        matchedSupplier?.id || supplierContracts[0]?.supplierId
+      )
+
+      const totalContractedVal = supplierContracts.reduce((sum, c) => sum + (c.value || c.totalValue || 0), 0)
+      const totalOrdersCount = supplierOrders.length
+      const totalOrdersVal = supplierOrders.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+      const avgOrderVal = totalOrdersCount > 0 ? totalOrdersVal / totalOrdersCount : 0
+
+      const concluidos = supplierOrders.filter((o) =>
+        ["concluído", "entregue", "realizado"].includes((o.status || "").toLowerCase())
+      )
+      const pendentes = supplierOrders.filter((o) =>
+        ["pendente", "em separação", "em sepação", "rascunho"].includes((o.status || "").toLowerCase())
+      )
+      const canceladosCount = supplierOrders.filter((o) => (o.status || "").toLowerCase() === "cancelado").length
+      const concluidosVal = concluidos.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+      const pendentesVal = pendentes.reduce((sum, o) => sum + (o.totalValue || 0), 0)
+      const pctConcluidos = totalOrdersCount > 0 ? Math.round((concluidos.length / totalOrdersCount) * 100) : 0
+
+      const slug = suppDetails.name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-")
+
+      if (format === "pdf") {
+        const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
+
+        // Barra superior executiva
+        doc.setFillColor(15, 23, 42)
+        doc.rect(0, 0, 297, 3.5, "F")
+
+        // Identidade do Sistema
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(8)
+        doc.setTextColor(37, 99, 235)
+        doc.text("LICITAME  •  RELATÓRIO INDIVIDUAL DE FORNECEDOR E HISTÓRICO DE PEDIDOS", 14, 10.5)
+
+        // Título com Nome do Fornecedor
+        const docTitle = `DOSSIÊ DO FORNECEDOR — ${suppDetails.name.toUpperCase()}`
+        const docTitleDisplay = docTitle.length > 56 ? docTitle.substring(0, 53) + "..." : docTitle
+        doc.setFontSize(13.5)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(15, 23, 42)
+        doc.text(docTitleDisplay, 14, 17.5)
+
+        // CNPJ imediatamente abaixo do nome + ficha de contato
+        doc.setFontSize(8.5)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(51, 65, 85)
+        const statusBadgeText = matchedSupplier ? (matchedSupplier.active ? " • Situação: ATIVO" : " • Situação: INATIVO") : ""
+        doc.text(`CNPJ: ${suppDetails.cnpj || "Não informado"}${statusBadgeText}`, 14, 22.5)
+
+        doc.setFontSize(7.5)
+        doc.setFont("helvetica", "normal")
+        doc.setTextColor(100, 116, 139)
+        const contactParts: string[] = []
+        if (matchedSupplier?.contactPhone) contactParts.push(`Tel: ${matchedSupplier.contactPhone}`)
+        if (matchedSupplier?.email) contactParts.push(`Email: ${matchedSupplier.email}`)
+        if (matchedSupplier?.city) contactParts.push(`${matchedSupplier.city}${matchedSupplier.state ? `/${matchedSupplier.state}` : ""}`)
+        doc.text(
+          contactParts.length > 0
+            ? contactParts.join("  |  ")
+            : "Consolidado gerencial de contratos vigentes e todos os pedidos realizados ao fornecedor.",
+          14,
+          27
+        )
+
+        // Box de Parâmetros de Emissão
+        doc.setFillColor(248, 250, 252)
+        doc.setDrawColor(203, 213, 225)
+        doc.roundedRect(217, 6, 66, 21.5, 2, 2, "FD")
+
+        doc.setFontSize(7)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(71, 85, 105)
+        doc.text("PARÂMETROS DO DOSSIÊ", 221, 10.5)
+
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(6.5)
+        doc.setTextColor(100, 116, 139)
+        doc.text(
+          `Emissão: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+          221,
+          14.2
+        )
+        const periodLabel =
+          filters?.startDate || filters?.endDate
+            ? `${filters?.startDate ? new Date(filters.startDate).toLocaleDateString("pt-BR") : "..."} a ${
+                filters?.endDate ? new Date(filters.endDate).toLocaleDateString("pt-BR") : "..."
+              }`
+            : "Todo o Histórico"
+        doc.text(`Período: ${periodLabel}`, 221, 17.7)
+        doc.text(`Contratos: ${supplierContracts.length}  |  Pedidos: ${totalOrdersCount}`, 221, 21.2)
+        const orderStatusDisplay =
+          orderStatusFilter && !["all", "ativo", "inativo"].includes(orderStatusFilter)
+            ? orderStatusFilter.toUpperCase()
+            : "Todos os Pedidos"
+        doc.text(`Filtro Pedidos: ${orderStatusDisplay}`, 221, 24.7)
+
+        // 4 Cards de KPIs Executivos
+        drawKpiCard(
+          doc,
+          14,
+          30,
+          64,
+          17,
+          "Contratos Vinculados",
+          `${supplierContracts.length} contrato${supplierContracts.length !== 1 ? "s" : ""}`,
+          `Pactuado: R$ ${totalContractedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          [15, 23, 42]
+        )
+
+        drawKpiCard(
+          doc,
+          82,
+          30,
+          64,
+          17,
+          "Pedidos Feitos ao Fornecedor",
+          `${totalOrdersCount} pedido${totalOrdersCount !== 1 ? "s" : ""}`,
+          `${concluidos.length} concluído(s) • ${pendentes.length} em aberto`,
+          [37, 99, 235]
+        )
+
+        drawKpiCard(
+          doc,
+          150,
+          30,
+          64,
+          17,
+          "Volume Total em Pedidos",
+          `R$ ${totalOrdersVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `Ticket médio: R$ ${avgOrderVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          [124, 58, 237]
+        )
+
+        drawKpiCard(
+          doc,
+          218,
+          30,
+          65,
+          17,
+          "Atendidos vs Em Aberto",
+          `R$ ${concluidosVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          `${pctConcluidos}% atendido • Aberto: R$ ${pendentesVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+          pendentes.length > 0 ? [217, 119, 6] : [16, 185, 129]
+        )
+
+        let nextSectionY = 52
+
+        // Seção 1: Resumo dos Contratos Vinculados
+        if (supplierContracts.length > 0) {
+          doc.setFontSize(8.5)
+          doc.setFont("helvetica", "bold")
+          doc.setTextColor(15, 23, 42)
+          doc.text(`1. CONTRATOS VINCULADOS (${supplierContracts.length})`, 14, nextSectionY)
+
+          const contractRows = supplierContracts.map((c) => {
+            const cVal = c.value || c.totalValue || 0
+            const cUsed = c.usedValue || 0
+            const cSaldo = cVal - cUsed
+            const start = c.startDate ? new Date(c.startDate).toLocaleDateString("pt-BR") : "-"
+            const end = c.expirationDate ? new Date(c.expirationDate).toLocaleDateString("pt-BR") : "-"
+            return [
+              c.number || "Sem nº",
+              c.costBase || c.contractingParty || "Geral",
+              getContractDescription(c),
+              `${start}\na ${end}`,
+              `R$ ${cVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+              `Exec: R$ ${cUsed.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\nSaldo: R$ ${cSaldo.toLocaleString("pt-BR", {
+                minimumFractionDigits: 2,
+              })}`,
+              `[ ${(c.status || "Ativo").toUpperCase()} ]`,
+            ]
+          })
+
+          autoTable(doc, {
+            head: [["Contrato", "Secretaria / Base", "Objeto", "Vigência", "Valor Pactuado", "Execução / Saldo", "Situação"]],
+            body: contractRows,
+            startY: nextSectionY + 2.5,
+            margin: { top: 18, bottom: 16, left: 14, right: 14 },
+            styles: {
+              font: "helvetica",
+              fontSize: 6.8,
+              textColor: [30, 41, 59],
+              lineColor: [226, 232, 240],
+              lineWidth: 0.1,
+              cellPadding: { top: 2, bottom: 2, left: 2, right: 2 },
+              overflow: "linebreak",
+              valign: "top",
+            },
+            headStyles: {
+              fillColor: [30, 41, 59],
+              textColor: [255, 255, 255],
+              fontSize: 7,
+              fontStyle: "bold",
+              cellPadding: 2,
+            },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            columnStyles: {
+              0: { cellWidth: 30, fontStyle: "bold" },
+              1: { cellWidth: 38 },
+              2: { cellWidth: 81 },
+              3: { cellWidth: 26, halign: "center" },
+              4: { cellWidth: 30, halign: "right" },
+              5: { cellWidth: 40, halign: "right" },
+              6: { cellWidth: 24, halign: "center", fontStyle: "bold" },
+            },
+          })
+
+          nextSectionY = ((doc as any).lastAutoTable?.finalY || nextSectionY + 20) + 8
+        }
+
+        // Evita título órfão no fim da página
+        if (nextSectionY > 172) {
+          doc.addPage()
+          nextSectionY = 19
+        }
+
+        // Seção 2: Todos os Pedidos Realizados ao Fornecedor
+        doc.setFontSize(8.5)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(15, 23, 42)
+        doc.text(
+          `${supplierContracts.length > 0 ? "2." : "1."} HISTÓRICO COMPLETO DE PEDIDOS FEITOS (${supplierOrders.length})`,
+          14,
+          nextSectionY
+        )
+
+        const orderRows = supplierOrders.map((order) => {
+          const linkedContract = supplierContracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+          const orderNum = order.number || "Sem nº"
+          const orderDate = order.date ? new Date(order.date).toLocaleDateString("pt-BR") : "-"
+          const deliveryStr = order.deliveryDate ? `\nEntrega: ${new Date(order.deliveryDate).toLocaleDateString("pt-BR")}` : ""
+          const col0 = `${orderNum}\nData: ${orderDate}${deliveryStr}`
+
+          const contractRef = order.contractNumber || linkedContract?.number || "Sem contrato"
+          const sec = linkedContract?.costBase || order.requestedByDepartment || "Não informada"
+          const col1 = `${contractRef}\nSec: ${sec}`
+
+          const col2 =
+            order.items && order.items.length > 0
+              ? order.items
+                  .map((item) => {
+                    const qty = item.quantity || 0
+                    const unit = item.unitPrice || 0
+                    const total = item.totalPrice || qty * unit
+                    return `• ${qty}x ${item.name} (Unit: R$ ${unit.toLocaleString("pt-BR", {
+                      minimumFractionDigits: 2,
+                    })} | Total: R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})`
+                  })
+                  .join("\n")
+              : "Nenhum item discriminado"
+
+          const sol = order.requestedBy ? `Sol: ${order.requestedBy}` : "Sol: Não informado"
+          const dest = order.requestedFor
+            ? `\nPara: ${order.requestedFor}`
+            : order.requestedByDepartment
+              ? `\nDepto: ${order.requestedByDepartment}`
+              : ""
+          const notes = order.notes ? `\nObs: ${order.notes}` : ""
+          const col3 = `${sol}${dest}${notes}`
+
+          const col4 = `R$ ${(order.totalValue || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+          const col5 = `[ ${(order.status || "Pendente").toUpperCase()} ]`
+
+          return [col0, col1, col2, col3, col4, col5]
+        })
+
+        const orderBody =
+          orderRows.length > 0
+            ? orderRows
+            : [["Nenhum pedido encontrado para este fornecedor com os filtros selecionados.", "-", "-", "-", "-", "-"]]
+
+        autoTable(doc, {
+          head: [
+            [
+              "Nº Pedido / Datas",
+              "Contrato / Secretaria",
+              "Itens do Pedido (Qtd, Produto, Unitário e Total)",
+              "Solicitante / Destino",
+              "Valor Total",
+              "Status",
+            ],
+          ],
+          body: orderBody,
+          startY: nextSectionY + 2.5,
+          margin: { top: 18, bottom: 16, left: 14, right: 14 },
+          styles: {
+            font: "helvetica",
+            fontSize: 7,
+            textColor: [30, 41, 59],
+            lineColor: [226, 232, 240],
+            lineWidth: 0.1,
+            cellPadding: { top: 2.3, bottom: 2.3, left: 2, right: 2 },
+            overflow: "linebreak",
+            valign: "top",
+          },
+          headStyles: {
+            fillColor: [15, 23, 42],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            cellPadding: 2.5,
+          },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { cellWidth: 30, fontStyle: "bold", textColor: [15, 23, 42] },
+            1: { cellWidth: 42 },
+            2: { cellWidth: 92 },
+            3: { cellWidth: 43 },
+            4: { cellWidth: 32, halign: "right", fontStyle: "bold", textColor: [15, 23, 42] },
+            5: { cellWidth: 30, halign: "center" },
+          },
+          didParseCell: (data) => {
+            if (data.section === "body" && data.column.index === 5) {
+              const txt = String(data.cell.raw || "").toUpperCase()
+              if (txt.includes("CONCLUÍDO") || txt.includes("ENTREGUE") || txt.includes("REALIZADO")) {
+                data.cell.styles.textColor = [16, 185, 129]
+                data.cell.styles.fontStyle = "bold"
+              } else if (txt.includes("PENDENTE") || txt.includes("SEPARAÇÃO") || txt.includes("SEPAÇÃO")) {
+                data.cell.styles.textColor = [217, 119, 6]
+                data.cell.styles.fontStyle = "bold"
+              } else if (txt.includes("CANCELADO")) {
+                data.cell.styles.textColor = [220, 38, 38]
+                data.cell.styles.fontStyle = "bold"
+              }
+            }
+          },
+        })
+
+        applyLandscapeChrome(
+          doc,
+          docTitleDisplay,
+          `Fornecedor: ${suppDetails.name} | CNPJ: ${suppDetails.cnpj || "Não informado"}`
+        )
+
+        doc.save(`dossie-fornecedor-${slug}-${now.toISOString().split("T")[0]}.pdf`)
+      } else if (format === "csv" || format === "excel") {
+        const csvHeader = [
+          "Fornecedor",
+          "CNPJ",
+          "Número do Pedido",
+          "Data do Pedido",
+          "Previsão de Entrega",
+          "Contrato Vinculado",
+          "Secretaria / Base de Custo",
+          "Itens do Pedido",
+          "Qtd Total de Itens",
+          "Solicitante",
+          "Destino",
+          "Observações",
+          "Valor Total (R$)",
+          "Status",
+        ]
+          .map(escapeCsv)
+          .join(";")
+
+        const csvRows = supplierOrders.map((order) => {
+          const linkedContract = supplierContracts.find((c) => c.id === order.contractId || c.number === order.contractNumber)
+          const itemsSummary =
+            order.items && order.items.length > 0
+              ? order.items
+                  .map(
+                    (i) =>
+                      `${i.quantity}x ${i.name} (Unit: R$ ${(i.unitPrice || 0).toFixed(2)} | Total: R$ ${(
+                        i.totalPrice || i.quantity * i.unitPrice
+                      ).toFixed(2)})`
+                  )
+                  .join(" | ")
+              : "Nenhum item"
+          const itemsCount = order.items ? order.items.reduce((s, i) => s + (i.quantity || 0), 0) : 0
+
+          return [
+            suppDetails.name,
+            suppDetails.cnpj || "Não informado",
+            order.number,
+            order.date ? new Date(order.date).toLocaleDateString("pt-BR") : "-",
+            order.deliveryDate ? new Date(order.deliveryDate).toLocaleDateString("pt-BR") : "-",
+            order.contractNumber || linkedContract?.number || "-",
+            linkedContract?.costBase || order.requestedByDepartment || "-",
+            itemsSummary,
+            itemsCount,
+            order.requestedBy || "-",
+            order.requestedFor || "-",
+            order.notes || "-",
+            (order.totalValue || 0).toFixed(2),
+            order.status,
+          ]
+            .map(escapeCsv)
+            .join(";")
+        })
+
+        const csvContent = [csvHeader, ...csvRows].join("\n")
+        const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = `dossie-fornecedor-${slug}-${now.toISOString().split("T")[0]}.csv`
+        link.click()
+        URL.revokeObjectURL(url)
+      }
+      return
+    }
+
+    // MODO B: RELATÓRIO GERAL DE FORNECEDORES (consolidado executivo com contagem de contratos e pedidos)
+    type UnifiedSupplierRow = {
+      id?: string
+      name: string
+      cnpj: string
+      email: string
+      contactPhone: string
+      cityState: string
+      active: boolean
+      contractsCount: number
+      contractedVal: number
+      ordersCount: number
+      ordersVal: number
+    }
+
+    const unifiedMap = new Map<string, UnifiedSupplierRow>()
+
+    const getSupplierStats = (sId: string | undefined, sName: string, sCnpj: string) => {
+      const cleanTarget = sName.toLowerCase().trim()
+      const cleanCnpj = sCnpj.replace(/\D/g, "")
+      const matchedContracts = contracts.filter((c) => {
+        if (sId && c.supplierId === sId) return true
+        const comp = (c.company || "").toLowerCase().trim()
+        const cCnpj = (c.cnpj || "").replace(/\D/g, "")
+        return comp === cleanTarget || (cleanCnpj.length >= 8 && cCnpj === cleanCnpj)
+      })
+      const cIds = new Set(matchedContracts.map((c) => c.id).filter(Boolean))
+      const cNums = new Set(matchedContracts.map((c) => c.number).filter(Boolean))
+      const matchedOrders = orders.filter(
+        (o) => (o.contractId && cIds.has(o.contractId)) || (o.contractNumber && cNums.has(o.contractNumber))
+      )
+      return {
+        contractsCount: matchedContracts.length,
+        contractedVal: matchedContracts.reduce((sum, c) => sum + (c.value || c.totalValue || 0), 0),
+        ordersCount: matchedOrders.length,
+        ordersVal: matchedOrders.reduce((sum, o) => sum + (o.totalValue || 0), 0),
+      }
+    }
+
+    suppliers.forEach((s) => {
+      const details = resolveSupplierDetails(s.name, s.cnpj, s.id)
+      const key = details.name.toLowerCase().trim()
+      const stats = getSupplierStats(s.id, details.name, details.cnpj)
+      unifiedMap.set(key, {
+        id: s.id,
+        name: details.name,
+        cnpj: details.cnpj,
+        email: s.email || "-",
+        contactPhone: s.contactPhone || "-",
+        cityState: s.city ? `${s.city}${s.state ? `/${s.state}` : ""}` : "-",
+        active: s.active,
+        ...stats,
+      })
+    })
+
+    contracts.forEach((c) => {
+      const details = resolveSupplierDetails(c.company, c.cnpj, c.supplierId)
+      const key = details.name.toLowerCase().trim()
+      if (!unifiedMap.has(key) && c.company?.trim()) {
+        const stats = getSupplierStats(c.supplierId, details.name, details.cnpj)
+        unifiedMap.set(key, {
+          id: c.supplierId,
+          name: details.name,
+          cnpj: details.cnpj,
+          email: "-",
+          contactPhone: "-",
+          cityState: "-",
+          active: true,
+          ...stats,
+        })
+      }
+    })
+
+    let filteredSuppliers = Array.from(unifiedMap.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+
+    if (filters?.status === "ativo" || filters?.status === "inativo") {
       const isActive = filters.status === "ativo"
       filteredSuppliers = filteredSuppliers.filter((s) => s.active === isActive)
     }
 
+    const totalCount = filteredSuppliers.length
+    const activeCount = filteredSuppliers.filter((s) => s.active).length
+    const totalContracts = filteredSuppliers.reduce((sum, s) => sum + s.contractsCount, 0)
+    const totalOrdersCount = filteredSuppliers.reduce((sum, s) => sum + s.ordersCount, 0)
+    const totalOrdersVal = filteredSuppliers.reduce((sum, s) => sum + s.ordersVal, 0)
+
     if (format === "pdf") {
-      const doc = new jsPDF()
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
 
-      doc.setFontSize(18)
-      doc.text("Relatório de Fornecedores", 14, 22)
+      doc.setFillColor(15, 23, 42)
+      doc.rect(0, 0, 297, 3.5, "F")
 
-      doc.setFontSize(11)
-      doc.text(`Data de geração: ${new Date().toLocaleDateString("pt-BR")}`, 14, 32)
-      doc.text(`Total de fornecedores: ${filteredSuppliers.length}`, 14, 38)
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8)
+      doc.setTextColor(37, 99, 235)
+      doc.text("LICITAME  •  SISTEMA INTEGRADO DE GESTÃO ESTRATÉGICA DE FORNECEDORES", 14, 11)
 
-      const tableData = filteredSuppliers.map((supplier) => [
-        supplier.name,
-        supplier.cnpj,
-        supplier.email,
-        supplier.phone,
-        supplier.active ? "Ativo" : "Inativo",
+      const docTitle = "RELATÓRIO EXECUTIVO DE FORNECEDORES E DEMANDAS"
+      doc.setFontSize(14)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(15, 23, 42)
+      doc.text(docTitle, 14, 18)
+
+      doc.setFontSize(8.5)
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(100, 116, 139)
+      doc.text(
+        "Visão gerencial da base de fornecedores, contratos ativos, volume de pedidos realizados e canais de contato.",
+        14,
+        24
+      )
+
+      doc.setFillColor(248, 250, 252)
+      doc.setDrawColor(203, 213, 225)
+      doc.roundedRect(217, 7, 66, 20, 2, 2, "FD")
+
+      doc.setFontSize(7)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(71, 85, 105)
+      doc.text("PARÂMETROS DE EMISSÃO", 221, 11.5)
+
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(6.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text(
+        `Data/Hora: ${now.toLocaleDateString("pt-BR")} às ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`,
+        221,
+        15.5
+      )
+      doc.text(`Status: ${filters?.status ? filters.status.toUpperCase() : "Todos"}`, 221, 19.5)
+      doc.text(`Fornecedores: ${totalCount}`, 221, 23.5)
+
+      drawKpiCard(
+        doc,
+        14,
+        30,
+        64,
+        17,
+        "Fornecedores Listados",
+        `${totalCount} empresa${totalCount !== 1 ? "s" : ""}`,
+        `${activeCount} ativo(s) • ${totalCount - activeCount} inativo(s)`,
+        [37, 99, 235]
+      )
+      drawKpiCard(
+        doc,
+        82,
+        30,
+        64,
+        17,
+        "Contratos Vinculados",
+        `${totalContracts} contrato${totalContracts !== 1 ? "s" : ""}`,
+        "Soma global dos vínculos ativos/encerrados",
+        [15, 23, 42]
+      )
+      drawKpiCard(
+        doc,
+        150,
+        30,
+        64,
+        17,
+        "Pedidos Registrados",
+        `${totalOrdersCount} pedido${totalOrdersCount !== 1 ? "s" : ""}`,
+        "Total de solicitações emitidas aos fornecedores",
+        [124, 58, 237]
+      )
+      drawKpiCard(
+        doc,
+        218,
+        30,
+        65,
+        17,
+        "Volume Movimentado",
+        `R$ ${totalOrdersVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        "Valor acumulado dos pedidos listados",
+        [16, 185, 129]
+      )
+
+      const tableRows = filteredSuppliers.map((s) => [
+        `${s.name}\nCNPJ: ${s.cnpj || "Não informado"}`,
+        `Tel: ${s.contactPhone}\nEmail: ${s.email}`,
+        s.cityState,
+        `${s.contractsCount} contrato(s)\nR$ ${s.contractedVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `${s.ordersCount} pedido(s)\nR$ ${s.ordersVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        `[ ${s.active ? "ATIVO" : "INATIVO"} ]`,
       ])
 
       autoTable(doc, {
-        head: [["Nome", "CNPJ", "Email", "Telefone", "Status"]],
-        body: tableData,
-        startY: 45,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [59, 130, 246] },
+        head: [["Fornecedor / CNPJ", "Contato / Email", "Cidade / UF", "Contratos", "Pedidos Feitos", "Status"]],
+        body: tableRows.length > 0 ? tableRows : [["Nenhum fornecedor encontrado.", "-", "-", "-", "-", "-"]],
+        startY: 50,
+        margin: { top: 18, bottom: 16, left: 14, right: 14 },
+        styles: {
+          font: "helvetica",
+          fontSize: 7,
+          textColor: [30, 41, 59],
+          lineColor: [226, 232, 240],
+          lineWidth: 0.1,
+          cellPadding: { top: 2.3, bottom: 2.3, left: 2, right: 2 },
+          overflow: "linebreak",
+          valign: "top",
+        },
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 7.5,
+          fontStyle: "bold",
+          cellPadding: 2.5,
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: {
+          0: { cellWidth: 74, fontStyle: "bold", textColor: [15, 23, 42] },
+          1: { cellWidth: 62 },
+          2: { cellWidth: 32 },
+          3: { cellWidth: 38, halign: "right" },
+          4: { cellWidth: 39, halign: "right" },
+          5: { cellWidth: 24, halign: "center" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.column.index === 5) {
+            const txt = String(data.cell.raw || "").toUpperCase()
+            if (txt.includes("ATIVO") && !txt.includes("INATIVO")) {
+              data.cell.styles.textColor = [16, 185, 129]
+              data.cell.styles.fontStyle = "bold"
+            } else if (txt.includes("INATIVO")) {
+              data.cell.styles.textColor = [220, 38, 38]
+              data.cell.styles.fontStyle = "bold"
+            }
+          }
+        },
       })
 
-      doc.save(`relatorio-fornecedores-${new Date().toISOString().split("T")[0]}.pdf`)
+      applyLandscapeChrome(doc, docTitle, `Status: ${filters?.status || "Todos"}`)
+      doc.save(`relatorio-fornecedores-${now.toISOString().split("T")[0]}.pdf`)
     } else if (format === "csv" || format === "excel") {
-      const csvContent = [
-        ["Nome", "CNPJ", "Email", "Telefone", "Cidade", "Estado", "Status"].join(";"),
-        ...filteredSuppliers.map((supplier) =>
-          [
-            supplier.name,
-            supplier.cnpj,
-            supplier.email,
-            supplier.phone,
-            supplier.city,
-            supplier.state,
-            supplier.active ? "Ativo" : "Inativo",
-          ].join(";"),
-        ),
-      ].join("\n")
+      const csvHeader = [
+        "Nome / Razão Social",
+        "CNPJ",
+        "Email",
+        "Telefone",
+        "Cidade / UF",
+        "Qtd Contratos",
+        "Valor Contratado (R$)",
+        "Qtd Pedidos",
+        "Volume em Pedidos (R$)",
+        "Status",
+      ]
+        .map(escapeCsv)
+        .join(";")
 
+      const csvRows = filteredSuppliers.map((s) =>
+        [
+          s.name,
+          s.cnpj || "Não informado",
+          s.email,
+          s.contactPhone,
+          s.cityState,
+          s.contractsCount,
+          s.contractedVal.toFixed(2),
+          s.ordersCount,
+          s.ordersVal.toFixed(2),
+          s.active ? "Ativo" : "Inativo",
+        ]
+          .map(escapeCsv)
+          .join(";")
+      )
+
+      const csvContent = [csvHeader, ...csvRows].join("\n")
       const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
-      link.download = `relatorio-fornecedores-${new Date().toISOString().split("T")[0]}.csv`
+      link.download = `relatorio-fornecedores-${now.toISOString().split("T")[0]}.csv`
       link.click()
       URL.revokeObjectURL(url)
     }

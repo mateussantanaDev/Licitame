@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { useSuppliers } from "@/lib/suppliers-provider"
+import { useReports } from "@/lib/reports-provider"
 import { useToast } from "@/components/ui/use-toast"
 
 import { Button } from "@/components/ui/button"
@@ -44,6 +45,7 @@ export default function FornecedorDetalhesPage() {
   const params = useParams()
   const { toast } = useToast()
   const { suppliers, getSupplierById, updateSupplier, deleteSupplier } = useSuppliers()
+  const { generateReport } = useReports()
 
   const [supplier, setSupplier] = useState<ReturnType<typeof getSupplierById>>(undefined)
   const [loading, setLoading] = useState(true)
@@ -165,6 +167,14 @@ export default function FornecedorDetalhesPage() {
           </Badge>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => generateReport("suppliers", "pdf", { supplier: supplier.name })}
+          >
+            <FileText className="mr-2 h-4 w-4" />
+            Relatório Individual
+          </Button>
           <Button variant="outline" size="sm" onClick={handleToggleStatus}>
             {supplier.active ? "Desativar" : "Ativar"}
           </Button>
