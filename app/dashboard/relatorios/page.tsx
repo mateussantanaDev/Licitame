@@ -7,13 +7,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useReports, type ReportFormat, type ReportFilter } from "@/lib/reports-provider"
 import { useContracts } from "@/lib/contracts-provider"
 import { useOrders } from "@/lib/orders-provider"
 import { useSuppliers } from "@/lib/suppliers-provider"
 import { useProducts } from "@/lib/products-provider"
 import { useCostBase } from "@/lib/cost-base-provider"
-import { getCanonicalCostBases, matchCostBase } from "@/lib/cost-base-utils"
+import { getCanonicalCostBases, matchCostBase, removeAccents } from "@/lib/cost-base-utils"
 import { formatCpfCnpj } from "@/lib/utils"
 import {
   FileText,
@@ -24,7 +25,172 @@ import {
   Building2,
   ShoppingCart,
   Database,
+  Search,
+  Check,
+  ChevronsUpDown,
+  X,
 } from "lucide-react"
+
+type AvailableSupplierOption = {
+  key: string
+  name: string
+  cnpj?: string
+  orderCount: number
+  contractCount: number
+}
+
+function SupplierFilterCombobox({
+  id,
+  suppliers,
+  value,
+  onChange,
+  allLabel = "Todos os fornecedores",
+  countMode = "both",
+}: {
+  id: string
+  suppliers: AvailableSupplierOption[]
+  value?: string
+  onChange: (nextValue?: string) => void
+  allLabel?: string
+  countMode?: "contracts" | "orders" | "both"
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+
+  const selected = useMemo(() => {
+    if (!value || value === "all") return undefined
+    const target = value.toLowerCase().trim()
+    return suppliers.find((s) => s.key.toLowerCase().trim() === target)
+  }, [suppliers, value])
+
+  const filtered = useMemo(() => {
+    const rawTerm = search.trim()
+    if (!rawTerm) return suppliers
+    const normTerm = removeAccents(rawTerm)
+    const digitsTerm = rawTerm.replace(/\D/g, "")
+
+    return suppliers.filter((s) => {
+      const normName = removeAccents(s.name)
+      const digitsCnpj = (s.cnpj || "").replace(/\D/g, "")
+      const matchName = normName.includes(normTerm)
+      const matchCnpj =
+        (s.cnpj && s.cnpj.toLowerCase().includes(rawTerm.toLowerCase())) ||
+        (digitsTerm.length >= 2 && digitsCnpj.includes(digitsTerm))
+      return matchName || Boolean(matchCnpj)
+    })
+  }, [suppliers, search])
+
+  const formatCount = (s: AvailableSupplierOption) => {
+    if (countMode === "contracts") {
+      return s.contractCount > 0 ? `(${s.contractCount} contrato${s.contractCount !== 1 ? "s" : ""})` : ""
+    }
+    if (countMode === "orders") {
+      return s.orderCount > 0 ? `(${s.orderCount} pedido${s.orderCount !== 1 ? "s" : ""})` : ""
+    }
+    return `(${s.contractCount} contr. / ${s.orderCount} ped.)`
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          id={id}
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full h-auto min-h-10 py-1.5 px-3 justify-between font-normal bg-background text-left"
+        >
+          {selected ? (
+            <div className="flex flex-col text-left leading-tight overflow-hidden mr-2">
+              <span className="font-medium text-sm text-foreground truncate">{selected.name}</span>
+              <span className="text-[11px] text-muted-foreground truncate">
+                {selected.cnpj ? `CNPJ: ${selected.cnpj}` : "CNPJ não informado"}
+              </span>
+            </div>
+          ) : (
+            <span className="text-muted-foreground truncate">{allLabel}</span>
+          )}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[320px] p-2" align="start">
+        <div className="space-y-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Pesquisar fornecedor por nome ou CNPJ..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 pr-8 text-sm h-9"
+              autoFocus
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                aria-label="Limpar busca"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="max-h-64 overflow-y-auto space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                onChange(undefined)
+                setOpen(false)
+                setSearch("")
+              }}
+              className={`w-full flex items-center justify-between py-2 px-2.5 rounded-md text-left text-sm hover:bg-accent transition-colors ${
+                !selected ? "bg-accent/60 font-medium" : ""
+              }`}
+            >
+              <span>{allLabel}</span>
+              {!selected && <Check className="h-4 w-4 text-primary shrink-0" />}
+            </button>
+
+            {filtered.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                Nenhum fornecedor encontrado para &ldquo;{search}&rdquo;.
+              </p>
+            ) : (
+              filtered.map((s) => {
+                const isSelected = selected?.key === s.key
+                const countStr = formatCount(s)
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => {
+                      onChange(s.key)
+                      setOpen(false)
+                      setSearch("")
+                    }}
+                    className={`w-full flex items-center justify-between py-2 px-2.5 rounded-md text-left text-sm hover:bg-accent transition-colors ${
+                      isSelected ? "bg-accent/60 font-medium" : ""
+                    }`}
+                  >
+                    <div className="flex flex-col overflow-hidden mr-2 leading-tight">
+                      <span className="font-medium text-sm text-foreground truncate">
+                        {s.name} {countStr && <span className="text-muted-foreground font-normal">{countStr}</span>}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
+                      </span>
+                    </div>
+                    {isSelected && <Check className="h-4 w-4 text-primary shrink-0" />}
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export default function RelatoriosPage() {
   const { generateReport, generateBackup } = useReports()
@@ -330,38 +496,14 @@ export default function RelatoriosPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="contractSupplier">Fornecedor Contratado</Label>
-                  <Select
-                    value={filters.supplier || "all"}
-                    onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
-                  >
-                    <SelectTrigger id="contractSupplier" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
-                      <SelectValue placeholder="Todos os fornecedores" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os fornecedores</SelectItem>
-                      {availableSuppliers.map((s) => (
-                        <SelectItem key={s.key} value={s.key}>
-                          <div className="flex flex-col text-left leading-tight py-0.5">
-                            <span className="font-medium text-foreground">
-                              {s.name}{" "}
-                              {s.contractCount > 0 ? `(${s.contractCount} contrato${s.contractCount !== 1 ? "s" : ""})` : ""}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedSupplierInfo && (
-                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
-                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
-                      </div>
-                    </div>
-                  )}
+                  <SupplierFilterCombobox
+                    id="contractSupplier"
+                    suppliers={availableSuppliers}
+                    value={filters.supplier}
+                    onChange={(nextSupplier) => setFilters({ ...filters, supplier: nextSupplier })}
+                    allLabel="Todos os fornecedores"
+                    countMode="contracts"
+                  />
                 </div>
               </div>
               <Button onClick={() => handleGenerateReport("contracts")} className="w-full">
@@ -384,38 +526,14 @@ export default function RelatoriosPage() {
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="orderSupplier">Fornecedor Contratado</Label>
-                  <Select
-                    value={filters.supplier || "all"}
-                    onValueChange={(value) => setFilters({ ...filters, supplier: value === "all" ? undefined : value })}
-                  >
-                    <SelectTrigger id="orderSupplier" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
-                      <SelectValue placeholder="Todos os fornecedores" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os fornecedores</SelectItem>
-                      {availableSuppliers.map((s) => (
-                        <SelectItem key={s.key} value={s.key}>
-                          <div className="flex flex-col text-left leading-tight py-0.5">
-                            <span className="font-medium text-foreground">
-                              {s.name}{" "}
-                              {s.orderCount > 0 ? `(${s.orderCount} pedido${s.orderCount !== 1 ? "s" : ""})` : ""}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedSupplierInfo && (
-                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
-                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
-                      </div>
-                    </div>
-                  )}
+                  <SupplierFilterCombobox
+                    id="orderSupplier"
+                    suppliers={availableSuppliers}
+                    value={filters.supplier}
+                    onChange={(nextSupplier) => setFilters({ ...filters, supplier: nextSupplier })}
+                    allLabel="Todos os fornecedores"
+                    countMode="orders"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -496,10 +614,11 @@ export default function RelatoriosPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="supplierSelect">Fornecedor (Individual ou Todos)</Label>
-                  <Select
-                    value={filters.supplier || "all"}
-                    onValueChange={(value) => {
-                      const nextSupplier = value === "all" ? undefined : value
+                  <SupplierFilterCombobox
+                    id="supplierSelect"
+                    suppliers={availableSuppliers}
+                    value={filters.supplier}
+                    onChange={(nextSupplier) => {
                       const cleanedStatus =
                         nextSupplier && (filters.status === "ativo" || filters.status === "inativo")
                           ? undefined
@@ -510,34 +629,9 @@ export default function RelatoriosPage() {
                             : filters.status
                       setFilters({ ...filters, supplier: nextSupplier, status: cleanedStatus })
                     }}
-                  >
-                    <SelectTrigger id="supplierSelect" className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none">
-                      <SelectValue placeholder="Todos os fornecedores (Relatório Geral)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos os fornecedores (Relatório Geral)</SelectItem>
-                      {availableSuppliers.map((s) => (
-                        <SelectItem key={s.key} value={s.key}>
-                          <div className="flex flex-col text-left leading-tight py-0.5">
-                            <span className="font-medium text-foreground">
-                              {s.name} ({s.contractCount} contr. / {s.orderCount} ped.)
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {s.cnpj ? `CNPJ: ${s.cnpj}` : "CNPJ não informado"}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedSupplierInfo && (
-                    <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
-                      <div className="font-medium text-foreground">{selectedSupplierInfo.name}</div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {selectedSupplierInfo.cnpj ? `CNPJ: ${selectedSupplierInfo.cnpj}` : "CNPJ não informado"}
-                      </div>
-                    </div>
-                  )}
+                    allLabel="Todos os fornecedores (Relatório Geral)"
+                    countMode="both"
+                  />
                 </div>
 
                 {selectedSupplierInfo ? (
